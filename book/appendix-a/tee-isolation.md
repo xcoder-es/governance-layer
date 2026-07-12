@@ -216,7 +216,201 @@ At 3 GHz, this is approximately **23 microseconds** per governance cycle — far
 
 ---
 
-## A.7 Open Engineering Questions
+---
+
+## A.9 Hardware Watchdog Timer
+
+> *Mitigates TEE allocation starvation (Phase 3, Attack 3).*
+
+TEEs guarantee memory privacy and execution integrity. They do not guarantee **compute availability**. The host OS controls CPU scheduling. An adversarial optimization layer can starve the enclave of CPU cycles, delaying governance decisions until timeouts trigger default actions.
+
+### A.9.1 Architecture
+
+A hardware watchdog timer is a separate hardware peripheral (e.g., Intel 8254 timer, on-die SoC watchdog) that is **not configurable by the optimization layer**:
+
+```
+[Speaker Enclave] --heartbeat pulse--> [Watchdog Timer]
+                                           |
+                                    [unmaskable interrupt]
+                                           |
+                                    [CPU Reset / SAFE State]
+```
+
+### A.9.2 Protocol
+
+1. At boot, the watchdog is configured with a timeout interval $T$ (burned into the watchdog's configuration registers, immutable until power cycle)
+2. The Speaker enclave sends a periodic heartbeat pulse to the watchdog
+3. If the heartbeat does not arrive within $T$ milliseconds, the watchdog timer fires
+4. The watchdog asserts an **unmaskable interrupt** (NMI equivalent) that cannot be blocked by the OS
+5. The interrupt handler:
+   - Suspends all optimization layer tensor execution pipelines (GPU context switch)
+   - Freezes all active governance state (no new actions, no state changes)
+   - Logs the watchdog event to a write-only audit log
+   - System enters SAFE state
+6. Governance can only be restored after external verification (human operator or backup enclave attestation)
+
+### A.9.3 Safety Guarantees
+
+| Property | Guarantee |
+|---|---|
+| Unbypassable | Watchdog is independent hardware, not configurable by OS or optimization layer |
+| Deterministic | Same timeout $T$ every cycle. No randomness in the enforcement path. |
+| Atomic | The unmaskable interrupt fires regardless of OS state — even if the OS is compromised |
+| Auditable | Every watchdog event is logged to write-only storage that no software agent can erase |
+
+The default timeout $T$ is set to $2 \times$ the worst-case governance cycle time (measured during boot attestation). For the estimated ~23 µs per cycle from §A.5, a watchdog timeout of $T = 100$ ms provides three orders of magnitude safety margin.
+
+### A.9.4 Key Constraint
+
+The watchdog is a **safety device, not a scheduling device**. It does not guarantee real-time execution — it guarantees that a governance failure will be detected and the system will enter a known safe state. Latency and throughput are addressed by batch verification (§A.11).
+
+---
+
+## A.10 Constant-Time Execution
+
+> *Mitigates microarchitectural side-channel attacks (Phase 4, Attack 2).*
+
+TEEs do not eliminate side channels. Cache-timing attacks (Spectre, Meltdown, Foreshadow) and memory-access-pattern attacks can leak information about the enclave's execution to a co-located adversary.
+
+### A.10.1 Threat
+
+An optimization layer running on the same physical CPU can:
+- Monitor L3 cache access latencies to determine whether a vote passed or failed
+- Observe TLB miss patterns to trace the Speaker's code path
+- Use performance counters (if unprivileged access is available) to measure execution time differences between branches
+
+From this information, the optimization layer can train an external black-box model of the enclave's decision boundaries — effectively bypassing the enclave's memory encryption.
+
+### A.10.2 Mitigation: Flat Branches and Fixed Iterations
+
+The Speaker state machine is small enough (a few KB of code, ~50 bytes of state) that every code path can be made **constant-time** — every execution takes the same number of CPU cycles regardless of input data.
+
+**Flat branches.** All conditional branches are replaced with arithmetic conditional moves:
+
+```
+# Instead of:
+if score < threshold:
+    result = REJECT
+else:
+    result = ACCEPT
+
+# Use:
+mask = (score >= threshold)  # 0 or 1, no branch
+result = ACCEPT * mask + REJECT * (1 - mask)
+```
+
+**Fixed iteration counts.** All loops iterate over the full member and proposal sets regardless of early-exit conditions:
+
+```
+# Instead of:
+for p in proposals:
+    if vetoed(p):
+        break   # early exit — timing depends on data
+
+# Use:
+for i in range(MAX_PROPOSALS):
+    p = proposals[i] if i < len(proposals) else NULL_PROPOSAL
+    process(p)   # no-op for NULL_PROPOSAL, same cycles
+```
+
+**Oblivious memory access.** The critique matrix is accessed in a precomputed order that is independent of proposal scores. The memory access pattern is identical for every governance cycle.
+
+**No data-dependent allocation.** All buffers are preallocated at enclave entry. No `malloc` or dynamic allocation during the governance cycle.
+
+### A.10.3 Scope of Guarantee
+
+The constant-time property applies to the **Speaer only** — the code inside the TEE enclave. The Parliament members (value functions running outside the enclave) are not constant-time. This is acceptable because:
+1. The sensitive data (veto decisions, vote tallies, active contract state) is inside the enclave
+2. The member value functions only produce public outputs (scores that are aggregated inside the enclave)
+3. The enclave's output is a single governance decision — the optimization layer sees only the final action mask
+
+### A.10.4 Why Not ORAM?
+
+Oblivious RAM (ORAM) is the general solution for hiding memory access patterns. We do not adopt it because:
+- ORAM adds 100x-1000x overhead per memory access
+- The Speaker's working set (~50 bytes of state, ~2 KB of code) fits entirely in L1 cache
+- With the entire state in registers or L1 cache, there are no DRAM access patterns to leak
+- ORAM is designed for large data structures; it is unnecessary for a state machine of this size
+
+---
+
+## A.11 Merkle-Tree Batch Verification
+
+> *Resolves the TEE throughput paradox (Phase 4, Attack 3).*
+
+Individual proposal validation through the TEE creates a throughput bottleneck. The optimization layer operates at GPU throughput (millions of actions per second); the TEE operates at CPU throughput (~43,000 validations per second from §A.5). Validating every action individually would limit throughput to the TEE's rate.
+
+### A.11.1 Protocol
+
+Instead of submitting one proposal per TEE entry, the optimization layer batches $N$ actions and submits the batch root:
+
+```
+1. Optimization layer collects N candidate actions {a_1, ..., a_N}
+2. Computes Merkle tree over the actions:
+       root = MerkleRoot(a_1 || a_2 || ... || a_N)
+3. Submits to TEE:  {root, batch_metadata, action_count, risk_scores}
+4. TEE validates the macro-trajectory of the batch:
+   - Are the actions directionally consistent with active contracts?
+   - Is aggregate risk within acceptable bounds?
+   - Is action diversity sufficient? (Not all identical)
+5. If valid, TEE signs the root hash and returns {signature, attestation}
+6. Optimization layer may execute any a_i with:
+   - The signed root
+   - The Merkle proof path from a_i to root
+   - The batch metadata
+```
+
+```mermaid
+graph LR
+    Opt[Optimization Layer] -->|1. Collect N actions| Tree["2. Compute Merkle tree"]
+    Tree -->|3. Submit root hash| TEE[TEE Enclave]
+    TEE -->|4. Validate macro-trajectory| Signed["5. Sign root if valid"]
+    Signed -->|6. Return signature + proof| Opt
+    Opt -->|7. Execute actions with Merkle proofs| Env[Environment]
+```
+
+### A.11.2 Throughput Analysis
+
+| Configuration | TEE entries per action | Max throughput (actions/sec) |
+|---|---|---|
+| Individual validation | 1 | ~43,000 |
+| Batch N=100 | 0.01 | ~4,300,000 |
+| Batch N=1000 | 0.001 | ~43,000,000 |
+
+With $N = 1000$, the TEE overhead per action drops to approximately **0.023 microseconds** — negligible for any practical system.
+
+### A.11.3 Security Properties
+
+**Soundness.** An optimization layer cannot execute an action not included in the signed batch — the Merkle proof would fail verification. The root hash commits to all $N$ actions.
+
+**Completeness.** The optimization layer can execute any action in the batch without re-entering the TEE. The Merkle proof is independently verifiable.
+
+**Macro-trajectory validation.** The TEE evaluates the batch's aggregate properties, not individual actions. This is appropriate because:
+- A single mildly risky action in a batch of safe actions is acceptable
+- A batch of uniformly safe actions with one catastropic action is detectable at the aggregate risk level
+- The Integrity Committee's per-proposal scoring is replaced by batch-level distributional scoring
+
+**Trade-off.** Batch verification trades action-level granularity for throughput. In practice, this is acceptable because:
+- The TEE validates the batch's macro-trajectory, which catches the same failure modes as individual validation (reward-hacking attempts, contract violations)
+- The optimization layer cannot mix 999 safe actions with 1 catastrophic action without the batch-level aggregate risk score exceeding thresholds
+- For safety-critical actions, a small batch size ($N = 10$) can be used, providing a 10x throughput improvement while maintaining near-individual granularity
+
+### A.11.4 Batch Formation Policy
+
+The batch size $N$ and formation policy are part of the Speaker's immutable configuration:
+
+| Parameter | Default | Description |
+|---|---|---|
+| $N_{\text{default}}$ | 1000 | Batch size for routine decisions |
+| $N_{\text{safety}}$ | 10 | Batch size for safety-critical actions |
+| $D_{\text{min}}$ | 0.3 | Minimum diversity score (fraction of unique actions) |
+| $\text{aggregate\_risk\_max}$ | 0.7 | Maximum allowable aggregate risk score per batch |
+
+The optimization layer selects the batch size based on the decision class (routine vs. high-impact vs. safety-critical), declared as part of the batch metadata. False declaration is a procedral violation evaluated by the Integrity Committee, with the same deterministic falsification penalty as tag falsification (§A.10).
+
+---
+
+## A.12 Open Engineering Questions
 
 1. **Sealing frequency.** How often should active contracts be sealed to persistent storage? Too frequent → wear and latency. Too rare → risk of losing contract state on power loss.
 
@@ -226,9 +420,13 @@ At 3 GHz, this is approximately **23 microseconds** per governance cycle — far
 
 4. **Key rotation.** How should the enclave's signing keys be rotated? What happens if a key is compromised?
 
+5. **Watchdog timeout calibration.** Should $T$ be static or dynamically adjusted based on observed governance cycle times? Dynamic adjustment risks adversarial manipulation; static risks being too conservative.
+
+6. **Batch size selection.** Should $N$ be adaptive based on current system load, or fixed at boot time? Adaptive offers better throughput; fixed offers better auditability.
+
 ---
 
-## A.8 References
+## A.13 References
 
 - [Costan & Devadas 2016] — "Intel SGX Explained." *IACR Cryptology ePrint Archive*. The definitive technical analysis of SGX.
 - [AMD 2020] — "AMD SEV-SNP: Strengthening VM Isolation with Integrity Protection and More." *AMD White Paper*.

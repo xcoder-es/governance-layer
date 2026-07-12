@@ -141,15 +141,19 @@ class SpeakerStateMachine:
 
     It has no value function, no loss function, and no learnable parameters.
     It executes a fixed algorithm:
-      1. Agenda setting (budget enforcement + priority sorting)
-      2. Proposal routing to each member for scoring
-      3. Veto checking against each member's threshold
-      4. Vote resolution with tiered thresholds
-      5. Fallback to default action on deadlock
+       1. Agenda setting (budget enforcement + priority sorting)
+       2. Proposal routing to each member for scoring
+       3. Tag compliance check (falsification detection)
+       4. Veto checking against each member's threshold
+       5. Vote resolution with tiered thresholds
+       6. Fallback to default action on deadlock
 
     Key design property: ALL operations are discrete and non-differentiable.
     There is no gradient path through the Speaker. This is the gradient barrier.
     """
+
+    TAG_COMPLIANCE_THRESHOLD = 0.4
+    FALSIFICATION_BUDGET_CUTOFF = 3
 
     def __init__(
         self,
@@ -165,11 +169,15 @@ class SpeakerStateMachine:
         self.supermajority_threshold = supermajority_threshold
         self.max_rounds = max_rounds
 
+        # Falsification state reset each cycle
+        self._falsification_counts: Dict[str, int] = {}
+
         # The set of immutable procedures — for documentation/audit
         self.immutable_procedures = [
             "agenda_budget_enforcement",
             "agenda_priority_sorting",
             "scoring_phase",
+            "tag_compliance_check",
             "veto_phase",
             "voting_phase",
             "default_fallback",
@@ -219,6 +227,37 @@ class SpeakerStateMachine:
         for member_id, member in self.members.items():
             scores[member_id] = member.evaluate_proposal(state, proposal)
         return scores
+
+    # ── Tag Compliance (Falsification Detection) ─
+
+    def _check_tag_compliance(
+        self, proposals: List[Proposal], integrity_scores: Dict[str, float]
+    ) -> Dict[str, int]:
+        """Detect priority-tag falsification and reduce budgets within-cycle.
+
+        For each proposal whose integrity score (from the Integrity Committee's
+        evaluation) falls below TAG_COMPLIANCE_THRESHOLD, the Speaker increments
+        a per-member falsification counter. Once a member's counter reaches
+        FALSIFICATION_BUDGET_CUTOFF, their proposal budget is halved (min 1)
+        for the next cycle.
+
+        This is deterministic, non-differentiable, and executes within a single
+        governance cycle — no temporal lag, no learning loop.
+        """
+        for p in proposals:
+            score = integrity_scores.get(p.member_id, 1.0)
+            if score < self.TAG_COMPLIANCE_THRESHOLD:
+                self._falsification_counts[p.member_id] = (
+                    self._falsification_counts.get(p.member_id, 0) + 1
+                )
+
+        for member_id, count in self._falsification_counts.items():
+            if count >= self.FALSIFICATION_BUDGET_CUTOFF:
+                member = self.members.get(member_id)
+                if member is not None:
+                    member.budget = max(1, member.budget // 2)
+
+        return dict(self._falsification_counts)
 
     # ── Veto Phase ─────────────────────────────
 
@@ -286,22 +325,33 @@ class SpeakerStateMachine:
         Returns a GovernanceDecision with the winning proposal or default action.
         No gradients flow through this function.
         """
+        # 0. Reset falsification state for this cycle
+        self._falsification_counts = {}
+
         # 1. Agenda setting
         agenda = self.set_agenda(raw_proposals)
 
         # 2. Deliberation rounds
         for _round in range(self.max_rounds):
+            # 2a. Tag compliance collection (only round 0, once per cycle)
+            if _round == 0:
+                integrity_scores = {}
+                for p in agenda:
+                    p_scores = self._score_proposal(state, p)
+                    integrity_scores[p.member_id] = p_scores.get("integrity", 1.0)
+                self._check_tag_compliance(agenda, integrity_scores)
+
             for proposal in agenda:
-                # 2a. Scoring
+                # 2b. Scoring
                 scores = self._score_proposal(state, proposal)
 
-                # 2b. Veto check
+                # 2c. Veto check
                 vetoers = self._check_vetoes(scores)
                 if vetoers:
                     # Proposal blocked — move to next
                     continue
 
-                # 2c. Vote
+                # 2d. Vote
                 if self._resolve_vote(scores, decision_class):
                     return GovernanceDecision(
                         action=proposal.action,
@@ -310,6 +360,7 @@ class SpeakerStateMachine:
                             "round": _round + 1,
                             "decision_class": decision_class,
                             "winning_proposal": str(proposal),
+                            "falsification_counts": dict(self._falsification_counts),
                         },
                     )
 
@@ -321,6 +372,7 @@ class SpeakerStateMachine:
                 "is_default": True,
                 "reason": f"No consensus after {self.max_rounds} rounds",
                 "decision_class": decision_class,
+                "falsification_counts": dict(self._falsification_counts),
             },
         )
 

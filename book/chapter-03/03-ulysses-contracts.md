@@ -234,7 +234,33 @@ $$
 
 The active contract set thus influences what the Parliament itself decides — contracts shape governance, which shapes future contracts.
 
-### 3.2 Meta-Constraints and Contracts
+### 3.2 Key Management and Hardware Root of Trust
+
+A critical property of Ulysses Contracts: **no software agent — including the Integrity Committee — ever holds a signing key.**
+
+The key hierarchy is:
+
+```
+[hardware fuse key — burned at manufacture, never exposed to software]
+         ↓ (derivation inside TEE, chain never leaves enclave)
+[TEE root key — exists only inside the enclave, never exported]
+         ↓ (per-contract derivation)
+[contract signing key — ephemeral, destroyed on contract expiration]
+```
+
+The Integrity Committee does not sign contracts. It **requests** signatures from the TEE enclave. The TEE independently validates the request:
+
+1. Did the Parliament vote on this contract? (Quorum met? Voting rule satisfied?)
+2. Did the vote meet the enactment threshold $\phi$?
+3. Is the proposer authorized (has `propose_ulysses_contract` privilege)?
+
+If all checks pass, the TEE signs the contract using its internally-held key and returns the signed manifest. If any check fails, the TEE rejects the request.
+
+**Consequence for security:** Even if the optimization layer fully subverts the Integrity Committee's neural weights, it cannot forge a contract signature. The TEE's validation logic is immutable — measured at attestation and verified by remote parties. The optimization layer could make the Integrity Committee *request* a malicious contract, but the TEE would reject it because the request would not pass procedural validation (the other six members would not have voted for it).
+
+This is the hardware root of trust that makes self-imposed cryptographic commitments meaningful. The hand that signs the contract is not software. It is silicon.
+
+### 3.3 Meta-Constraints and Contracts
 
 The meta-constraints output $\mathcal{M}_{\mathrm{con}}$ from Chapter 2 can modify the governance process itself. A Ulysses Contract is one form of meta-constraint — specifically, one that persists across multiple governance cycles.
 
