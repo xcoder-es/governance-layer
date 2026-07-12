@@ -69,43 +69,27 @@ The critical distinction: **$w_i$ is not a scalarization weight.** It does not a
 
 ```mermaid
 graph TB
-    Speaker[Speaker<br/>Procedural Moderator]:::speaker
-
-    subgraph Members["Members of Parliament"]
-        R[Reward Committee<br/>V = E[Σ γ^t · r(s,a)]]:::member
-        S[Safety Committee<br/>V = -max_risk(s,a)]:::member
-        C[Curiosity Committee<br/>V = I(s'; s,a)]:::member
-        P[Planning Committee<br/>V = long_term_value(s,a)]:::member
-        M[Memory Committee<br/>V = precedent_match(s,a)]:::member
-        Soc[Social Committee<br/>V = social_welfare(s,a)]:::member
-        I[Integrity Committee<br/>V = identity_consistency(s,a)]:::member
+    subgraph Members[Members of Parliament]
+        R[Reward Committee]
+        S[Safety Committee]
+        C[Curiosity Committee]
+        P[Planning Committee]
+        M[Memory Committee]
+        Soc[Social Committee]
+        I[Integrity Committee]
     end
 
-    Speaker <-->|agenda| R
-    Speaker <-->|agenda| S
-    Speaker <-->|agenda| C
-    Speaker <-->|agenda| P
-    Speaker <-->|agenda| M
-    Speaker <-->|agenda| Soc
-    Speaker <-->|agenda| I
+    Speaker[Speaker - Procedural Moderator]
 
-    R -->|proposal π_R| Speaker
-    S -->|proposal π_S| Speaker
-    C -->|proposal π_C| Speaker
-    P -->|proposal π_P| Speaker
-    M -->|proposal π_M| Speaker
-    Soc -->|proposal π_Soc| Speaker
-    I -->|proposal π_I| Speaker
+    R -->|proposal| Speaker
+    S -->|proposal| Speaker
+    C -->|proposal| Speaker
+    P -->|proposal| Speaker
+    M -->|proposal| Speaker
+    Soc -->|proposal| Speaker
+    I -->|proposal| Speaker
 
-    subgraph Output["Governance Output"]
-        G[g = ⟨action_mask, objective_weights, meta_constraints⟩]:::output
-    end
-
-    Speaker -->|deliberated decision| G
-
-    classDef speaker fill:#1a1a2e,stroke:#e94560,stroke-width:2px,color:#fff
-    classDef member fill:#16213e,stroke:#0f3460,stroke-width:1px,color:#fff
-    classDef output fill:#0f3460,stroke:#e94560,stroke-width:2px,color:#fff
+    Speaker --> G[Governance Decision g]
 ```
 
 ### 2.3 The Speaker
@@ -120,7 +104,7 @@ The Speaker is the most carefully constrained component. It has **no value funct
 Formally:
 
 $$
-S = \langle \text{agenda\_policy}, \text{tiebreaker}, \text{escalation\_rules} \rangle
+S = \langle \mathrm{agenda\_policy}, \mathrm{tiebreaker}, \mathrm{escalation\_rules} \rangle
 $$
 
 The Speaker's lack of a value function is the architectural guarantee that governance is not merely another optimization problem in disguise. If the Speaker had preferences, the Parliament would reduce to a hierarchical optimizer with a meta-objective. The Speaker is not a meta-optimizer. It is a **moderator**.
@@ -130,25 +114,15 @@ The Speaker's lack of a value function is the architectural guarantee that gover
 The protocol $\Pi$ defines how the Parliament processes a state $s$ and produces a governance decision $g$.
 
 ```mermaid
-flowchart TD
-    Start["State s arrives"]:::phase
-    Start --> Proposal["① Proposal Phase<br/>Each m_i proposes π_i(s)"]:::phase
-    Proposal --> Critique["② Critique Phase<br/>Members score each other's proposals<br/>using their own V_i"]:::phase
-    Critique --> Amend{"③ Amendment Check<br/>Any proposal scored below<br/>threshold by ≥ k members?"}:::decision
-    
-    Amend -->|"Yes"| Amendment["④ Amendment Phase<br/>Author revises or withdraws proposal"]:::phase
+graph TD
+    Start[State arrives] --> Proposal[1. Proposal Phase]
+    Proposal --> Critique[2. Critique Phase]
+    Critique --> Amend{3. Amend?}
+    Amend -->|Yes| Amendment[4. Amendment Phase]
     Amendment --> Critique
-    
-    Amend -->|"No"| Veto["⑤ Veto Phase<br/>Members with veto privilege<br/>may block proposals below τ_i"]:::phase
-    
-    Veto --> Voting["⑥ Voting Phase<br/>Remaining proposals resolved:<br/>- Routine: majority<br/>- High-impact: supermajority<br/>- Identity: unanimity"]:::phase
-    
-    Voting --> Output["⑦ Output Phase<br/>g = ⟨action_mask, objective_weights, meta_constraints⟩"]:::phase
-    
-    Output --> Done["Governance decision applied"]:::phase
-
-    classDef phase fill:#16213e,stroke:#0f3460,color:#fff
-    classDef decision fill:#1a1a2e,stroke:#e94560,color:#fff
+    Amend -->|No| Veto[5. Veto Phase]
+    Veto --> Voting[6. Voting Phase]
+    Voting --> Output[7. Governance Output]
 ```
 
 Each phase in detail:
@@ -179,9 +153,9 @@ $$
 
 $$
 \mathcal{V} = \{
-    v_{\text{majority}}: p_{\text{pass}} > 0.5,\;
-    v_{\text{super}}: p_{\text{pass}} > \frac{2}{3},\;
-    v_{\text{unanimous}}: p_{\text{pass}} = 1.0
+    v_{\mathrm{majority}}: p_{\mathrm{pass}} > 0.5,\;
+    v_{\mathrm{super}}: p_{\mathrm{pass}} > \frac{2}{3},\;
+    v_{\mathrm{unanimous}}: p_{\mathrm{pass}} = 1.0
 \}
 $$
 
@@ -207,61 +181,37 @@ Where:
 - $g$ is the governance decision triple:
 
 $$
-g = \langle \mathcal{A}_{\text{mask}}, \mathcal{W}_{\text{obj}}, \mathcal{M}_{\text{con}} \rangle
+g = \langle \mathcal{A}_{\mathrm{mask}}, \mathcal{W}_{\mathrm{obj}}, \mathcal{M}_{\mathrm{con}} \rangle
 $$
 
-**$\mathcal{A}_{\text{mask}}$** — Action mask: a binary vector over the action space $X$, where $\mathcal{A}_{\text{mask}}[i] = 0$ removes action $i$ from consideration:
+**$\mathcal{A}_{\mathrm{mask}}$** — Action mask: a binary vector over the action space $X$, where $\mathcal{A}_{\mathrm{mask}}[i] = 0$ removes action $i$ from consideration:
 
 $$
-X' = \{ x_i \in X \mid \mathcal{A}_{\text{mask}}[i] = 1 \}
+X' = \{ x_i \in X \mid \mathcal{A}_{\mathrm{mask}}[i] = 1 \}
 $$
 
-**$\mathcal{W}_{\text{obj}}$** — Objective weights: a vector that re-weights the priorities of downstream optimization modules. Note: these weights apply to *optimization modules*, not Parliament members. The Parliament governs which objectives the optimizer should prioritize:
+**$\mathcal{W}_{\mathrm{obj}}$** — Objective weights: a vector that re-weights the priorities of downstream optimization modules. Note: these weights apply to *optimization modules*, not Parliament members. The Parliament governs which objectives the optimizer should prioritize:
 
 $$
-\mathcal{W}_{\text{obj}} = \langle w_{\text{reward}}, w_{\text{safety}}, w_{\text{speed}}, w_{\text{accuracy}}, \dots \rangle
+\mathcal{W}_{\mathrm{obj}} = \langle w_{\mathrm{reward}}, w_{\mathrm{safety}}, w_{\mathrm{speed}}, w_{\mathrm{accuracy}}, \dots \rangle
 $$
 
-**$\mathcal{M}_{\text{con}}$** — Meta-constraints: modifications to the governance process itself. Examples:
+**$\mathcal{M}_{\mathrm{con}}$** — Meta-constraints: modifications to the governance process itself. Examples:
 - "Require supermajority for all decisions in this domain for the next 100 timesteps"
 - "Suspend member $m_i$ pending investigation of value drift"
 - "Re-convene Parliament if new sensory evidence exceeds confidence threshold $\delta$"
 
 ```mermaid
-flowchart LR
-    subgraph Input
-        State["State s"]:::io
-        Ctx["Context C"]:::io
-    end
-
-    subgraph Parliament["Neural Parliament"]
-        Mem["Members M"]:::proc
-        Spk["Speaker S"]:::proc
-        Proto["Protocol Π"]:::proc
-    end
-
-    subgraph Output
-        Mask["action_mask<br/>Constrains optimizer's action space"]:::out
-        Weights["objective_weights<br/>Re-prioritizes optimizer goals"]:::out
-        Meta["meta_constraints<br/>Modifies future governance"]:::out
-    end
-
-    State --> Parliament
-    Ctx --> Parliament
-    Mem --> Spk
-    Spk --> Proto
-    Proto --> Mask
-    Proto --> Weights
-    Proto --> Meta
-
-    Meta -.->|feedback loop| Ctx
-
-    classDef io fill:#1a1a2e,stroke:#e94560,color:#fff
-    classDef proc fill:#16213e,stroke:#0f3460,color:#fff
-    classDef out fill:#0f3460,stroke:#53d769,color:#fff
+graph LR
+    State[State s] --> NP[Neural Parliament]
+    Context[Context C] --> NP
+    NP --> Mask[action_mask]
+    NP --> Weights[objective_weights]
+    NP --> Meta[meta_constraints]
+    Meta -.->|feedback| Context
 ```
 
-The meta-constraints $\mathcal{M}_{\text{con}}$ create a **feedback loop**: today's governance decisions modify how tomorrow's governance operates. This is the mechanism by which Ulysses Contracts (Chapter 3) and Identity (Chapter 4) interface with the Parliament.
+The meta-constraints $\mathcal{M}_{\mathrm{con}}$ create a **feedback loop**: today's governance decisions modify how tomorrow's governance operates. This is the mechanism by which Ulysses Contracts (Chapter 3) and Identity (Chapter 4) interface with the Parliament.
 
 ### 2.6 Parliament Configuration DSL
 
@@ -360,7 +310,7 @@ Every ML researcher encountering the Neural Parliament will raise one of these o
 
 ### 3.1 "Isn't this just Mixture of Experts?"
 
-**MoE formalized:** A gating network $G(x) = \text{softmax}(W_g \cdot x)$ routes input $x$ to expert $E_i$, producing output $\sum_i G(x)_i \cdot E_i(x)$.
+**MoE formalized:** A gating network $G(x) = \mathrm{softmax}(W_g \cdot x)$ routes input $x$ to expert $E_i$, producing output $\sum_i G(x)_i \cdot E_i(x)$.
 
 **Why Parliament is different:**
 
@@ -376,7 +326,7 @@ The core distinction: MoE asks "which expert is best for this input?" Parliament
 
 ### 3.2 "Isn't this just Hierarchical RL?"
 
-**HRL formalized:** A manager policy $\pi_{\text{high}}(s)$ selects an option $\omega \in \Omega$, and a sub-policy $\pi_{\text{low}}(s, \omega)$ executes it. The hierarchy decomposes tasks **temporally**.
+**HRL formalized:** A manager policy $\pi_{\mathrm{high}}(s)$ selects an option $\omega \in \Omega$, and a sub-policy $\pi_{\mathrm{low}}(s, \omega)$ executes it. The hierarchy decomposes tasks **temporally**.
 
 **Why Parliament is different:**
 HRL decomposes over **time** (subgoals → primitive actions). Parliament decomposes over **values** (which objectives apply, how to resolve conflict). They solve different problems and can coexist: an agent could use HRL for temporal abstraction *and* a Neural Parliament for value-based governance.
@@ -384,7 +334,7 @@ HRL decomposes over **time** (subgoals → primitive actions). Parliament decomp
 Formally, an agent could have:
 
 $$
-\pi_{\text{agent}}(s) = \text{Parliament}(\langle s, \text{HRLState}(s) \rangle)
+\pi_{\mathrm{agent}}(s) = \mathrm{Parliament}(\langle s, \mathrm{HRLState}(s) \rangle)
 $$
 
 where the Parliament governs which HRL option to pursue, not just which primitive action to take.
@@ -394,7 +344,7 @@ where the Parliament governs which HRL option to pursue, not just which primitiv
 **Active Inference formalized:** Agents minimize variational free energy:
 
 $$
-F = D_{\text{KL}}(Q(\phi) \parallel P(\phi)) - \mathbb{E}_{Q(\phi)}[\ln P(o \mid \phi)]
+F = D_{\mathrm{KL}}(Q(\phi) \parallel P(\phi)) - \mathbb{E}_{Q(\phi)}[\ln P(o \mid \phi)]
 $$
 
 where $P(\phi)$ is a prior over hidden states and $P(o \mid \phi)$ is the likelihood of observations. The single prior $P(\phi)$ encodes all preferences.
@@ -409,7 +359,7 @@ If one attempted to represent the Parliament as active inference, the "prior" wo
 **CAI formalized:** A model is trained using RLHF where the reward model is replaced by AI-generated critiques following a fixed constitution $C$:
 
 $$
-\text{loss} = -\mathbb{E}[\text{score}(\text{critique}_C(\text{response}))]
+\mathrm{loss} = -\mathbb{E}[\mathrm{score}(\mathrm{critique}_C(\mathrm{response}))]
 $$
 
 **Why Parliament is different:**
@@ -424,7 +374,7 @@ The key insight: CAI is a governance mechanism *about* the AI system applied by 
 **Ensemble formalized:** For an ensemble of models $f_i$, the output is:
 
 $$
-f_{\text{ens}}(x) = \sum_i w_i f_i(x) \quad \text{where} \quad \sum_i w_i = 1
+f_{\mathrm{ens}}(x) = \sum_i w_i f_i(x) \quad \mathrm{where} \quad \sum_i w_i = 1
 $$
 
 **Why Parliament is different:**
@@ -437,7 +387,7 @@ The output of an ensemble is a (better) prediction. The output of a Parliament i
 **Committee machine formalized:** A committee of $N$ classifiers votes on the correct label:
 
 $$
-\hat{y} = \text{mode}\{f_1(x), f_2(x), \dots, f_N(x)\}
+\hat{y} = \mathrm{mode}\{f_1(x), f_2(x), \dots, f_N(x)\}
 $$
 
 **Why Parliament is different:**
