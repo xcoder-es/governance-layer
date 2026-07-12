@@ -51,23 +51,22 @@ This is not the only possible isolation mechanism, but it is the one with the st
 ```mermaid
 graph TB
     subgraph Untrusted["Untrusted Environment"]
-        Opt[Optimization Layer<br/>LLM / RL Agent]
-        OS[Operating System<br/>Hypervisor]
+        Opt[Optimization Layer]
+        OS[Operating System]
     end
 
     subgraph TEE["TEE Enclave"]
         Speaker[Speaker State Machine]
-        PrivateState[Private State<br/>Identity keys<br/>Commit secrets<br/>Randomness]
+        PrivateState[Private State]
         ActiveContracts[Active Contract Set]
     end
 
-    Opt -->|1. Sends state + proposals via attested channel| Speaker
-    Speaker -->|2. Returns governance decision| Opt
-    Speaker -->|3. Stores commitments| PrivateState
-    Speaker -->|4. Reads/writes| ActiveContracts
+    Opt -->|attested channel| Speaker
+    Speaker -->|governance decision| Opt
+    Speaker --- PrivateState
+    Speaker --- ActiveContracts
 
-    OS -->|Cannot read enclave memory| TEE
-    OS -->|Cannot modify enclave state| TEE
+    OS -.->|cannot read or modify| TEE
 ```
 
 ### A.3.1 Components

@@ -157,31 +157,25 @@ No single mechanism guarantees inviolability. Together, they create a defense-in
 
 ```mermaid
 graph LR
-    subgraph Enforcement["Enforcement Stack (κ)"]
-        Proc["κ_proc: Procedural inertia<br/>Revocation requires unanimity"]
-        Dist["κ_dist: N distributed monitors<br/>Bypass requires corrupting all N"]
-        Time["κ_time: Timelock T<br/>Violation delayed by T blocks"]
-    end
-
-    Proc --> Dist
-    Dist --> Time
-    Time --> Binding["Binding Contract"]
+    Proc["κ_proc: Procedural inertia (revocation requires unanimity)"] --> Dist
+    Dist["κ_dist: Distributed monitors (bypass requires corrupting all N)"] --> Time
+    Time["κ_time: Timelock T (violation delayed by T blocks)"] --> Binding["Binding Contract"]
 ```
 
 ### 2.5 Contract Lifecycle
 
 ```mermaid
 graph TD
-    Start[Integrity or authorized member<br/>proposes U] --> Deliberation[Standard Parliament protocol<br/>Proposal → Critique → Amendment]
+    Start[Member proposes U] --> Deliberation[Parliament deliberation]
     Deliberation --> Vote{Vote meets φ?}
     Vote -->|No| Rejected[Contract rejected]
     Vote -->|Yes| Enacted[Contract enacted]
-    Enacted --> Active[Active monitoring<br/>Restrictions applied before optimizer]
+    Enacted --> Active[Active monitoring]
     Active --> Review{Review triggered?}
     Review -->|No| Active
     Review -->|Yes| Revote{Vote meets ψ?}
     Revote -->|No| Active
-    Revote -->|Yes| Expired[Contract revoked<br/>Restrictions lifted]
+    Revote -->|Yes| Expired[Contract revoked]
 ```
 
 **① Proposal** — Any member with the `propose_ulysses_contract` privilege (default: Integrity Committee only) submits a contract specification $\mathcal{U}$. The proposal includes the action restriction set, proposed enactment threshold, proposed revocation threshold, and enforcement configuration.
