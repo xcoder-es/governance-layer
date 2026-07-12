@@ -109,6 +109,37 @@ $$
 
 The Speaker's lack of a value function is the architectural guarantee that governance is not merely another optimization problem in disguise. If the Speaker had preferences, the Parliament would reduce to a hierarchical optimizer with a meta-objective. The Speaker is not a meta-optimizer. It is a **moderator**.
 
+### 2.3.1 Agenda Setting: Anti-SDoS Guarantees
+
+The Speaker's agenda-setting function is the most attackable surface in the architecture. A fast-learning member could flood the agenda with semantically identical proposals, consuming compute budget of other members until quorum fails. We prevent this with two mechanisms that require no semantic understanding from the Speaker.
+
+**Proposal budgets.** Each member $m_i$ is allocated exactly $b_i$ proposal slots per governance cycle. This is a hard cap enforced algorithmically — the Speaker truncates to the budget before any processing occurs. The budget vector $\mathbf{b}$ is part of the Speaker's immutable configuration.
+
+$$
+\mathbf{b} = \langle b_{\text{Reward}}, b_{\text{Safety}}, b_{\text{Curiosity}}, b_{\text{Planning}}, b_{\text{Memory}}, b_{\text{Social}}, b_{\text{Integrity}} \rangle
+$$
+
+**Priority tags.** Each proposal carries a self-declared tag from a fixed enumerated set $\mathcal{T}$:
+
+$$
+\mathcal{T} = \{\text{CRITICAL\_SAFETY}, \text{HIGH\_IMPACT}, \text{ROUTINE}, \text{EXPLORATORY}, \text{INFORMATIONAL}\}
+$$
+
+The Speaker sorts by tag priority (immutable procedural rule), then by timestamp within each tier. The sort is a pure deterministic function of the proposal's metadata — no loss function, no gradient, no learned weights, no neural inference:
+
+```
+Speaker.agenda(proposals):
+    budgeted = filter_by_member_budget(proposals, b)
+    return sorted(budgeted, key=lambda p: (PRIORITY[p.tag], p.timestamp))
+```
+
+**Tag falsification is self-defeating.** A member that falsely tags a routine proposal as `CRITICAL_SAFETY` may receive agenda priority, but:
+1. The Safety Committee's evaluation will score it low (it is not actually safety-critical)
+2. The Integrity Committee evaluates the falsification itself as a procedural violation
+3. Persistent false tagging reduces the member's procedural reputation, potentially reducing future budget $b_i$
+
+The Speaker executes this algorithm as a pure deterministic state machine with no learnable parameters. The agenda operation is as differentiable as a bubble sort.
+
 ### 2.4 Deliberation Protocol
 
 The protocol $\Pi$ defines how the Parliament processes a state $s$ and produces a governance decision $g$.
@@ -222,8 +253,9 @@ Parliament "CoreGovernance" {
 
   Speaker {
     role = "procedural_moderator"
-    agenda_policy = "round_robin"
-    tiebreaker = "delay_and_recurse"
+    agenda_policy = "priority_tag_sorting"
+    priority_tiers = ["CRITICAL_SAFETY", "HIGH_IMPACT", "ROUTINE", "EXPLORATORY", "INFORMATIONAL"]
+    tiebreaker = "timestamp"
     escalation_target = "identity_layer"
   }
 
@@ -231,6 +263,7 @@ Parliament "CoreGovernance" {
     description = "Maximizes expected cumulative reward under current objective"
     value_fn    = "V(s,a) = E[Σ γ^t · r(s,a)]"
     proposal    = "π(s) = argmax_a V(s,a)"
+    budget      = 3        // Max 3 proposals per cycle
     veto        = 0.0      // No veto — always defers to others on safety
     weight      = 1.0      // Standard voting power
   }
@@ -239,6 +272,7 @@ Parliament "CoreGovernance" {
     description = "Minimizes worst-case outcomes"
     value_fn    = "V(s,a) = -max(risk(s,a))"
     proposal    = "π(s) = argmin_a max(risk(s,a))"
+    budget      = 5        // Higher budget for safety-critical proposals
     veto        = 0.7      // Blocks actions below 70% safety confidence
     weight      = 2.0      // Double voting power on safety matters
     privileges  = ["veto_on_high_impact", "call_emergency_session"]
@@ -248,6 +282,7 @@ Parliament "CoreGovernance" {
     description = "Proposes exploratory actions for information gain"
     value_fn    = "V(s,a) = I(s' ; s,a)"     // Mutual information
     proposal    = "π(s) = argmax_a I(s' ; s,a)"
+    budget      = 2
     veto        = 0.0
     weight      = 0.5      // Lower weight — exploration defers to exploitation
   }
@@ -256,6 +291,7 @@ Parliament "CoreGovernance" {
     description = "Evaluates long-term consequences of proposals"
     value_fn    = "V(s,a) = E[U(s_T) | s_0 = s, a_0 = a]"   // Terminal utility
     proposal    = "π(s) = argmax_a V_plan(s,a)"
+    budget      = 3
     veto        = 0.3
     weight      = 1.5      // Higher weight for long-horizon reasoning
   }
@@ -264,6 +300,7 @@ Parliament "CoreGovernance" {
     description = "Surfaces relevant precedents and past outcomes"
     value_fn    = "V(s,a) = sim(⟨s,a⟩, ⟨s_i, a_i⟩_successful)"
     proposal    = "π(s) = a_i where sim(s, s_i) is maximal"
+    budget      = 2
     veto        = 0.0
     weight      = 1.0
   }
@@ -272,22 +309,32 @@ Parliament "CoreGovernance" {
     description = "Evaluates impact on other agents and human values"
     value_fn    = "V(s,a) = Σ_j U_j(s,a)"    // Other agents' utilities
     proposal    = "π(s) = argmax_a social_welfare(s,a)"
+    budget      = 3
     veto        = 0.5
     weight      = 2.0
   }
 
   Member "Integrity" {
-    description = "Evaluates consistency with identity commitments"
+    description = "Evaluates consistency with identity commitments and detects procedural violations"
     value_fn    = "V(s,a) = identity_coherence(a, identity_vector)"
     proposal    = "π(s) = argmax_a coherence(s,a)"
+    budget      = 5
     veto        = 0.8      // Near-absolute veto on identity violations
     weight      = 3.0      // Highest voting power
-    privileges  = ["veto_on_identity", "propose_ulysses_contract"]
+    privileges  = ["veto_on_identity", "propose_ulysses_contract", "evaluate_procedural_compliance"]
   }
 
   Protocol {
     max_rounds = 3
     quorum     = 5         // At least 5 members must participate
+
+    priority_tags = [
+      { tag = "CRITICAL_SAFETY",  priority = 0 },
+      { tag = "HIGH_IMPACT",      priority = 1 },
+      { tag = "ROUTINE",           priority = 2 },
+      { tag = "EXPLORATORY",      priority = 3 },
+      { tag = "INFORMATIONAL",    priority = 4 }
+    ]
 
     vote_rules = [
       { tier = "routine",     threshold = 0.50, applies_to = ["reversible", "low_impact"] },
@@ -296,6 +343,7 @@ Parliament "CoreGovernance" {
     ]
 
     decision_classifier = "speaker_assignment"  // Speaker assigns decision class
+    cycle_breaker       = "default_action"      // Speaker returns default_action after max_rounds
   }
 }
 ```
@@ -395,25 +443,51 @@ Committee machines combine predictions for a shared task (classification accurac
 
 Furthermore, committee machines vote once. Parliament deliberates across **multiple rounds** with critique, amendment, and veto — a strictly richer interaction structure.
 
+### 3.7 "Isn't this just end-to-end learning with extra layers? The gradients will cause collusion."
+
+**Claim:** *"Even with fixed value functions, end-to-end training will cause latent representations of aligned committees to converge, flattening scoring diversity."*
+
+**Response: The discrete protocol is a gradient barrier by construction.**
+
+Consider the forward pass through a Parliament decision:
+
+1. Reward Committee proposes $\pi_R(s)$ — continuous, differentiable
+2. Safety Committee evaluates $V_S(s, \pi_R)$ — continuous, differentiable  
+3. Speaker executes: **veto check** — $V_S(s, \pi_R) < \tau_S$? If yes, block — **discrete, non-differentiable**
+4. Speaker executes: **vote** — majority threshold met? — **discrete, non-differentiable**
+
+The gradient from the final governance decision $g$ back to any member's proposal function is **zero through all discrete protocol operations**:
+
+$$
+\frac{\partial g}{\partial \pi_i} = 0 \quad \forall i \in \mathcal{M}
+$$
+
+This is not an implementation detail. It is the **architectural guarantee** that governance is not reducible to a deeper optimization layer. For the Reward Committee to learn how to "game" the Parliament, it would need to solve a black-box optimization problem (treating the Speaker and voting protocol as an unobservable oracle) — which is strictly harder than gradient-based alignment.
+
+**What about representation alignment during pre-training?** If all members share a single backbone, their latent representations may converge before the discrete protocol executes. The solution: **independent frozen backbones or cryptographic isolation between member compute contexts.** Each member's value function is an independent model with its own isolated parameters, trained on different data objectives. They share no latent space in which alignment can occur.
+
+The gradient barrier is the single most important computational property of the Neural Parliament. It is what makes the architecture structurally distinct from a deep neural network with more layers.
+
 ---
 
 ## 4. Comparison with Prior Work
 
-| Architecture | Objectives | Deliberation type | Output type | Self-modification | End-to-end learnable |
-|---|---|---|---|---|---|
-| **Neural Parliament** | 7 independent $V_i$ | Multi-round procedural | Discrete constraints + weights + meta | Yes (via meta_constraints) | Partial (meta-learning) |
-| Mixture of Experts | 1 shared loss | None (differentiable gating) | Weighted prediction | No | Yes |
-| Hierarchical RL | 1 cumulative reward | None (temporal abstraction) | Action sequence | No | Yes |
-| Active Inference | 1 prior over states | None (free-energy minimization) | Action | No | Yes |
-| Constitutional AI | 1 loss + constitution | None (training-time) | Model weights | No | Yes (via RLHF) |
-| Weighted Ensemble | 1 shared loss | None (weighted average) | Weighted prediction | No | Yes |
-| Committee Machine | 1 shared task | Single-round vote | Class label | No | Partial |
+| Architecture | Objectives | Deliberation type | Output type | Gradient barrier | Self-modification | End-to-end learnable |
+|---|---|---|---|---|---|---|---|
+| **Neural Parliament** | 7 independent $V_i$ | Multi-round procedural | Discrete constraints + weights + meta | **Yes** (discrete protocol) | Yes (via meta_constraints) | Partial (meta-learning) |
+| Mixture of Experts | 1 shared loss | None (differentiable gating) | Weighted prediction | No | No | Yes |
+| Hierarchical RL | 1 cumulative reward | None (temporal abstraction) | Action sequence | No | No | Yes |
+| Active Inference | 1 prior over states | None (free-energy minimization) | Action | No | No | Yes |
+| Constitutional AI | 1 loss + constitution | None (training-time) | Model weights | No | No | Yes (via RLHF) |
+| Weighted Ensemble | 1 shared loss | None (weighted average) | Weighted prediction | No | No | Yes |
+| Committee Machine | 1 shared task | Single-round vote | Class label | Partial (discrete vote) | No | Partial |
 
 The Neural Parliament is the only architecture in this comparison that:
 1. Maintains genuinely distinct value functions that cannot be collapsed
 2. Uses a multi-round procedural deliberation protocol
 3. Produces discrete governance constraints as output
-4. Supports self-modification of its own governance process
+4. Maintains a **gradient barrier** between governance and optimization (discrete protocol operations are non-differentiable)
+5. Supports self-modification of its own governance process
 
 ---
 
@@ -460,6 +534,10 @@ If the Neural Parliament architecture is correct, the following should hold:
 5. **Scalable critique.** The critique phase is $O(n^2)$ in the number of members. Can we design sparse critique graphs (each member only critiques a subset of proposals) without losing the benefits of deliberation?
 
 6. **Correspondence to neuroscience.** Does the Neural Parliament correspond to any known biological mechanism, or is it purely a computational artifact? The anterior cingulate cortex (conflict monitoring), prefrontal cortex (executive control), and basal ganglia (action selection via competing pathways) offer intriguing parallels.
+
+7. **Gradient barrier verification.** Can we formally prove that the discrete protocol operations create a true gradient barrier, or are there edge cases (e.g., soft relaxations, surrogate gradients) that may leak information across the barrier?
+
+8. **TEE integration.** What are the engineering requirements for executing the Speaker inside a Trusted Execution Environment? Does the performance overhead of TEE-boundary crossings make real-time governance infeasible?
 
 ---
 

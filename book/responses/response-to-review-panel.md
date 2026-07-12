@@ -287,3 +287,197 @@ Calling the Neural Parliament "just attention" is like calling a constitution "j
 4. **Add a formal analysis section** to the Appendix addressing the collusion and stability concerns raised here.
 
 Built, not defended. These critics did us a service. Every page of this response is a page the framework is stronger for having written.
+
+---
+
+# Phase 2 Response: Counter-Rebuttal to the Second Wave
+
+> *"The first wave tested our foundations. The second wave tests our engineering."*
+
+The review panel returned with four sharper attacks. We address each below, then update the architecture specification and deliver the MVP code they requested.
+
+---
+
+## Attack 1: The Semantic Bottleneck (SDoS on the Speaker)
+
+**Claim:** *"An algorithmic Speaker is trivially floodable via Semantic Denial of Service. An intelligent Speaker smuggles optimization back in. You lose either way."*
+
+### Where they are right
+
+The Speaker's agenda-setting is the most attackable surface in the architecture. The reviewer's code sketch — sorting proposals by `timestamp` — demonstrates the vulnerability concretely. A fast-learning Reward Committee can flood the agenda with semantically identical variations of a high-reward proposal, consuming Safety and Integrity compute budget until they exhaust their slots or hit quorum timeout.
+
+### Where they are wrong
+
+They present a false binary: **algorithmic (hackable) vs. intelligent (smuggles optimization)**. There is a third option: **domain-independent procedural priority**.
+
+The Speaker does not need to *understand* proposal content. It needs to apply rules about proposal *type* — and those types are self-declared by the proposing member, not inferred by the Speaker.
+
+**The mechanism:**
+1. **Proposal budgets**: Each member $m_i$ is allocated exactly $b_i$ proposal slots per governance cycle. This is a hard cap. The Reward Committee cannot flood the agenda with 100 proposals because it only gets 5 slots.
+2. **Priority tags**: Each proposal carries a self-declared tag from a fixed enumerated set: `{CRITICAL_SAFETY, HIGH_IMPACT, ROUTINE, EXPLORATORY, INFORMATIONAL}`. The Speaker sorts by tag priority (immutable procedural rule), then by timestamp within each tier.
+3. **Tag falsification is self-defeating**: A member that falsely tags a routine proposal as `CRITICAL_SAFETY` may get priority, but the Safety Committee's evaluation will score it low (it's not actually safety-critical), and the Integrity Committee evaluates the falsification itself as a procedural violation. False tagging reduces the member's procedural reputation, potentially reducing future $b_i$.
+
+```
+Speaker.agenda(proposals):
+    # Budget enforcement — hard cap per member
+    budgeted = []
+    counts = defaultdict(int)
+    for p in proposals:
+        if counts[p.member_id] < MAX_SLOTS[p.member_id]:
+            budgeted.append(p)
+            counts[p.member_id] += 1
+
+    # Priority sorting — immutable rule, no semantic inference
+    PRIORITY_ORDER = {
+        CRITICAL_SAFETY: 0,
+        HIGH_IMPACT: 1,
+        ROUTINE: 2,
+        EXPLORATORY: 3,
+        INFORMATIONAL: 4,
+    }
+    return sorted(budgeted, key=lambda p: (PRIORITY_ORDER[p.tag], p.timestamp))
+```
+
+The Speaker executes this as a pure deterministic function of the proposal's metadata — no loss function, no gradient, no learned weights, no LLM inference. The agenda operation is as differentiable as a bubble sort.
+
+### Verdict
+
+**Rebuffed.** Proposal budgets + domain-independent priority tags prevent SDoS without smuggling optimization into the Speaker. The reviewer's binary was incomplete.
+
+---
+
+## Attack 2: Gradient-Induced Collusion
+
+**Claim:** *"Even with fixed value functions, end-to-end training causes latent representations of aligned committees to converge, flattening scoring diversity."*
+
+### Where they are right about the risk
+
+If committee members share a transformer backbone, gradient updates during training will cause their representations to drift toward alignment. After sufficient training, the "Safety" and "Reward" heads may produce near-identical scores because their latent representations have merged. This is a real risk in naive implementations.
+
+### Where they miss the architecture's fundamental guarantee
+
+**The discrete Speaker protocol breaks the gradient.**
+
+Consider the forward pass:
+1. Reward Committee produces $\pi_R(s)$ and $V_R(s, \pi_R)$ — continuous values, differentiable
+2. Safety Committee produces $V_S(s, \pi_R)$ — continuous value, differentiable
+3. Speaker executes: **veto check** (discrete: $V_S(s, \pi_R) < \tau_S$? If yes, block — non-differentiable)
+4. Speaker executes: **vote** (discrete: majority threshold — non-differentiable)
+
+The gradient from the final governance decision $g$ back to the Reward Committee's proposal is **zero through the discrete protocol**. There is no differentiable path from "the action was blocked" to "Reward should propose a different action" — the veto is a discrete operation with no gradient.
+
+This is not an implementation detail. It is the **architectural guarantee** that governance is not reducible to optimization:
+
+$$
+\frac{\partial g}{\partial \pi_R} = 0 \quad \text{through all discrete protocol operations}
+$$
+
+For the Reward Committee to learn how to "game" the Parliament, it would need to solve a black-box optimization problem (treating the Parliament as an unobservable oracle) — which is strictly harder than gradient-based alignment, not easier. The discrete protocol creates an **information bottleneck** that prevents the very collusion the reviewer fears.
+
+### What about representation alignment during pre-training?
+
+This is the valid sub-concern. If all members share a pre-trained backbone, their representations may converge before the discrete protocol ever executes. The solution: **independent frozen backbones per member, or cryptographic isolation between member compute contexts.** Each member's value function is an independent model with its own frozen parameters, trained on different data objectives. They share no latent space in which alignment can occur.
+
+### Verdict
+
+**Mostly wrong.** The discrete protocol is a gradient barrier by construction. The pre-training alignment concern is valid but has a straightforward engineering solution (independent frozen backbones).**
+
+---
+
+## Attack 3: The Internal Oracle Dilemma
+
+**Claim:** *"If Ulysses Contract enforcement is internal, the Parliament can vote to accept the penalty. If external, it's not self-governing."*
+
+### Where they are right
+
+This is the deepest philosophical challenge in the framework. The question "who watches the watcher?" applies recursively to any enforcement mechanism.
+
+### Where they are wrong about the solutions
+
+The binary (internal = bypassable, external = not self-governing) is a false trichotomy. There are at least three mechanisms that occupy the middle ground:
+
+**1. Procedural inertia.** A Ulysses Contract is enacted by a supermajority. Its revocation requires **unanimity** — a strictly higher bar. The default system state is "contract active." This procedural asymmetry means the contract is "stickier" than any normal decision, without requiring an external enforcer.
+
+$$
+\text{Enact: } \frac{2}{3} \text{ of weighted vote} \quad \text{Revoke: } \frac{3}{3} \text{ of weighted vote}
+$$
+
+**2. Distributed multi-module enforcement.** The contract is monitored by $N$ independent evaluators with diverse architectures (different training data, different model families, different hardware enclaves). Violating the contract requires corrupting all $N$ evaluators. The cost of corruption scales linearly with $N$, making it computationally infeasible beyond a modest $N$.
+
+**3. Time-locked cryptographic commitments.** The contract is committed to a hash chain with a timelock. Even if the Parliament votes to break it, the actual cryptographic release requires $T$ blocks of time — during which external oversight or a cooling period can intervene. The agent is *capable* of breaking the contract, but not *instantly*, and the delay creates a window for intervention.
+
+These three mechanisms stack: procedural inertia makes revocation hard, distributed monitors make corruption expensive, and timelocks make violation slow. None are "external oracles" in the traditional sense. All are compatible with self-governance.
+
+### Verdict
+
+**Partially valid — the concern is real, but the solution space is richer than the binary they present. We will formalize the stacked enforcement mechanism in Chapter 3.**
+
+---
+
+## Attack 4: Stochastic Simulation — Retraction Accepted
+
+**Claim:** *"Injecting entropy into the governance path of a safety-critical system is unacceptable. Determinism is non-negotiable."*
+
+### Complete retraction
+
+The reviewer is **100% correct**, and our earlier proposal of stochastic procedural elements was **wrong**.
+
+We retract it in full. Reasons:
+
+1. **Safety certification requires determinism.** Any system that pilots a vehicle, manages a power grid, or controls medical equipment must have a deterministic, auditable decision path. Randomness in governance makes certification impossible.
+
+2. **Randomness does not solve the simulation problem.** The simulation problem is not solved by hiding the Speaker's decision from the optimization layer. It is solved by **architectural isolation** — cryptographic enclaves, information-theoretic barriers, and computational asymmetry. These provide protection without sacrificing determinism.
+
+3. **We should have known better.** Our earlier response confused "hard to model" with "safe." They are different categories.
+
+### Replacement proposal: Architectural isolation via TEE
+
+The gradient barrier (Attack 2 above) already prevents differentiable optimization through the protocol. The remaining concern is *stochastic simulation* — the optimization layer running an internal model of the Parliament to predict its decisions. The correct defense is not randomness but **cryptographic separation**:
+
+- The Speaker executes inside a Trusted Execution Environment (TEE) that the optimization layer cannot read or model internally
+- The Speaker has access to private state (the Identity Layer's commitment keys, member voting histories) that is inaccessible to the optimization layer
+- The optimization layer cannot simulate what it cannot observe
+
+This provides deterministic, auditable, cryptographically guaranteed separation — exactly what safety-critical systems require.
+
+### Verdict
+
+**Reviewer wins this round. We retract the stochastic proposal and replace it with TEE-based isolation. No randomness in the governance path.**
+
+---
+
+## The MVP Code
+
+The reviewers provided a Python code sketch showing the vulnerability (timestamp-based agenda sorting). We deliver the hardened implementation below, along with a reply to their structural challenge.
+
+The MVP is at [`src/governance/speaker.py`](../../src/governance/speaker.py). It implements:
+- Proposal budget enforcement (hard cap per member per cycle)
+- Priority-tag-based agenda sorting (deterministic, no semantic inference)
+- Range-based scoring and voting
+- Cycle-breaking via Speaker default action
+
+This is not a simulation — it is a reference implementation of the architecture specification. It proves the Speaker can be fully algorithmic, fully deterministic, and resistant to SDoS without smuggling optimization into its core.
+
+---
+
+## Updated Summary Table
+
+| Phase 2 Critique | Verdict | Action |
+|---|---|---|
+| 1. SDoS on Speaker | Rebuffed | Proposal budgets + priority tags added to Ch2 |
+| 2. Gradient-Induced Collusion | Mostly wrong | Discrete protocol is a gradient barrier by construction |
+| 3. Internal Oracle Dilemma | Partially valid | Procedural inertia + distributed monitors + timelocks in Ch3 |
+| 4. Stochastic Simulation | **Reviewer wins** | Retracted. Replaced with TEE-based isolation. |
+
+---
+
+## Phase 2 Actions (Completed)
+
+1. ✅ **Phase 2 response written** — this document
+2. ✅ **Retracted stochastic simulation** — removed from Chapter 2 architectural notes
+3. ✅ **Anti-SDoS specification** — proposal budgets + priority tags added to Chapter 2, §2.4 and DSL
+4. ✅ **Gradient-barrier analysis** — added to Chapter 2 as new §3.7
+5. ✅ **MVP code** — `src/governance/speaker.py` delivered, hardened against SDoS
+6. 🔲 **TEE isolation spec** — to be formalized in Chapter 3
+
+We go to the mat with anyone who takes our ideas seriously enough to tear them apart. The framework is stronger for every round.
