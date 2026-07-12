@@ -296,3 +296,20 @@ This chapter raises several questions that will guide the remainder of this work
 These questions motivate the chapters that follow.
 
 The remainder of this work proposes one possible answer.
+
+---
+
+## References
+
+See [`references/bibliography.md`](../../references/bibliography.md) for full entries with relevance analysis.
+
+Key citations for this chapter:
+
+- [Minsky 1986] — Society of Mind: precursor to Neural Parliament
+- [Bai 2022] — Constitutional AI: closest existing governance mechanism (externally applied)
+- [Russell 2019] — Critique of fixed-objective AI; alternative framing
+- [Elster 1979] — Ulysses and the Sirens: philosophical foundation of Ulysses Contracts
+- [Frankfurt 1971] — Higher-order desires: foundation of the Capability → Governance → Identity stack
+- [Amodei 2016] — Concrete AI safety problems; test cases for governance architecture
+- [Irving 2018] — AI safety via debate: adversarial deliberation as governance primitive
+- [Friston 2010] — Free-energy principle: strongest competing unification claim
