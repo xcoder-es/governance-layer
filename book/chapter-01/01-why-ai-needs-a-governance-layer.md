@@ -264,7 +264,7 @@ This project begins with a single hypothesis.
 
 Everything that follows in this work explores the implications of that hypothesis.
 
-The Neural Parliament, Ulysses Contracts, and the broader Artificial Human Intelligence framework should therefore be viewed not as isolated ideas, but as possible implementations of this broader principle.
+The Neural Parliament, Ulysses Contracts, and the broader Governance Layer framework should therefore be viewed not as isolated ideas, but as possible implementations of this broader principle.
 
 ---
 

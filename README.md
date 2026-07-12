@@ -1,4 +1,4 @@
-# Artificial Human Intelligence (AHI) 
+# Governance Layer
 
 > A research project exploring governance as a missing abstraction in artificial intelligence.
 
@@ -14,6 +14,8 @@ The project introduces several concepts under active development, including:
 - Ulysses Contracts
 - Governance Layer
 - Self-Governing AI
+
+Previously known as *Artificial Human Intelligence (AHI)*.
 
 This repository is intentionally open and evolves continuously.
 
