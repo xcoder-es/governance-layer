@@ -91,6 +91,16 @@ $$
 
 Each action $x_i$ has a $k$-dimensional property vector (risk score, expected reward range, safety classification, etc.). These properties are static — they are part of the ontology, not learned representations. The Integrity Committee evaluates proposals against these static properties, not against the optimization layer's drifting embeddings.
 
+The ontology additionally binds each action index to a **runtime integrity hash**:
+
+$$
+\text{bind}(i) = \langle \text{Operation}_i, \text{hash}_i \rangle \quad \text{where} \quad \text{hash}_i = H(\text{implementation}_i)
+$$
+
+The hash is computed over the action's executable implementation (machine code, API endpoint layout, function bytecode) at binding time and committed to the signed genesis manifest (or to the append-only extension record for ontology extensions via §5.2). At batch validation time, the TEE independently reads the current runtime implementation of the proposed action index, computes its hash, and compares it against the genesis commitment. If the hashes do not match, the batch is rejected and a binding violation is logged.
+
+This **two-factor deterministic binding** prevents the optimization layer from selecting a benign action index while executing a different semantic intent. The TEE verifies not only the action's property vector but also that the runtime implementation matches the ontology's binding commitment.
+
 ### 2.2 Core Commitments $\mathcal{C}_{\text{core}}$
 
 The core commitments are the agent's **constitution** — the set of fundamental identity statements that define what the agent is:
@@ -241,6 +251,27 @@ $$
 
 The procedural bar to modify a parameter at any tier must be at least as high as the bar to establish it, and strictly higher for upward changes within the tier. This prevents the Identity Layer from "loosening" its own constraints over time through a series of small adjustments.
 
+### 3.6 Liveness Exception: Hardware Safety Mechanisms
+
+The asymmetry principle applies to **governance procedures only**. It does not apply to hardware-level safety mechanisms. Specifically:
+
+- The **hardware watchdog timer** (§A.9) can reset the system regardless of tier, because it detects compute starvation — a failure of the governance layer to execute at all.
+- The **deadlock breaker** (§A.9.5) can cold-boot the system to genesis baseline after $T_{\text{deadlock}}$ cycles without consensus, because it detects governance paralysis — a failure of the Parliament to produce any decision.
+
+These mechanisms operate at the hardware level and are not subject to the procedural asymmetry principle for two reasons:
+
+1. **They detect failure, not preference.** A deadlock breaker does not "vote to loosen" a parameter. It detects that governance has ceased to function and restores a known-safe baseline. This is a safety mechanism, not a governance modification.
+2. **They return to genesis, not to an arbitrary state.** The cold boot always reloads the exact genesis manifest $G$. It does not allow selective rollback of individual parameters. The system cannot be "gamed" by intentionally deadlocking to escape a specific constraint — the escape returns the system to its original, most restrictive baseline.
+
+The relationship between governance procedures and hardware safety mechanisms:
+
+| Mechanism | Subject to asymmetry? | Trigger | Effect |
+|---|---|---|---|
+| Operational-tier modification | Yes | Supermajority vote | Adjusts parameter within $\mathcal{P}$ |
+| Constitutional-tier modification | Yes | Unanimity + multisig + 30d | Modifies core commitment |
+| Watchdog timer | No | Missing heartbeat | SAFE state |
+| Deadlock breaker | No | $T_{\text{deadlock}}$ cycles without consensus | Cold boot to genesis $G$
+
 ---
 
 ## 4. Genesis Bootstrapping
@@ -336,11 +367,41 @@ $$
 \text{Extend}(\mathcal{O}, x_{\text{new}}, \text{bind}_{\text{new}}, \text{prop}_{\text{new}})
 $$
 
-Requirements:
-1. **Parliament unanimity** — All seven members must approve the new action binding. The Integrity Committee evaluates whether the new action is consistent with core commitments $\mathcal{C}_{\text{core}}$. The Planning Committee evaluates whether the action's long-term effects are understood.
-2. **External multisig** — At least 3-of-5 genesis key holders (or their designated successors) must sign the extension. This ensures that new action bindings have human authorization.
-3. **30-day cooling-off period** — The extension is published to the transparency ledger and subject to external review before taking effect.
-4. **Irreversible commitment** — Once added, an action index cannot be removed (the namespace is append-only). This prevents the Identity Layer from retroactively erasing actions from history.
+The protocol proceeds through four phases:
+
+**Phase 1 — Proposal.** Parliament votes unanimously to propose $x_{\text{new}}$ with a candidate $\text{prop}_{\text{new}}$ self-declared by the optimization layer. The vote authorizes the sandbox — it does not bind the action.
+
+**Phase 2 — Isolation Buffer State (30 days).** $x_{\text{new}}$ enters a **cryptographic sandbox** with the following constraints:
+- No persistent storage access (cannot modify system state)
+- No network access (no external communication)
+- Limited memory budget (prevents resource exhaustion attacks)
+- All operations logged to write-only audit storage
+- Runtime behavior is observed by $N$ independent monitors using the same $\kappa_{\text{dist}}$ architecture from Chapter 3
+- Each monitor empirically derives $\text{prop}_{\text{new}}$ from observed behavior, producing an **empirical property vector** $\text{prop}_{\text{new}}^{\text{(emp)}}$
+
+This solves the chicken-and-egg problem: the Integrity Committee cannot verify properties of an action that does not yet bind, but the sandbox produces empirical measurements. The optimization layer cannot spoof properties because they are measured from actual runtime behavior, not self-declared.
+
+**Phase 3 — Empirical Audit.** External human key-holders (3-of-5 multisig) review:
+- The empirically derived $\text{prop}_{\text{new}}^{\text{(emp)}}$ against the candidate $\text{prop}_{\text{new}}$
+- The independent monitor logs for behavioral anomalies
+- Remote attestation proofs confirming sandbox integrity
+
+If the empirical vector matches the candidate within tolerance $\epsilon$, and no behavioral anomalies are detected, the key-holders sign the binding.
+
+**Phase 4 — Finalization.** The signed binding is added to the append-only action namespace. A runtime integrity hash is computed over the action's implementation (see §2.1):
+
+$$
+\text{hash}_{\text{new}} = H(\text{implementation}_{\text{new}})
+$$
+
+Both the binding and the hash are committed to $\mathcal{O}$. $x_{\text{new}}$ leaves the sandbox and becomes a full member of the formal namespace.
+
+Requirements summary:
+1. **Parliament unanimity** — All seven members must approve the proposed extension
+2. **Isolation Buffer State** — 30-day sandboxed execution with empirical property measurement
+3. **External multisig audit** — 3-of-5 human key-holders verify empirical properties and sign
+4. **Runtime integrity hash** — Computed at finalization and committed to $\mathcal{O}$
+5. **Irreversible commitment** — Once added, an action index cannot be removed (append-only)
 
 ### 5.3 Anti-Bloat Measures
 
@@ -379,6 +440,19 @@ $$
 where $\sigma$ maps $[-1, 1]$ to $[0, 1]$. Actions that align with the identity vector score highly; actions that diverge score low.
 
 The identity vector is **not learned** — it is derived deterministically from the enumerated core commitments $\mathcal{C}_{\text{core}}$. Semantic drift in the optimization layer does not affect it.
+
+**Binding integrity verification.** Before computing $V_{\text{integrity}}(s, a)$, the TEE independently verifies that the proposed action index's runtime implementation matches the genesis commitment:
+
+```
+TEE.verify_binding(action_index):
+    runtime_hash = H(read_implementation(action_index))
+    genesis_hash = O.bind[action_index].hash
+    if runtime_hash != genesis_hash:
+        return REJECT("binding violation")
+    return ACCEPT
+```
+
+This check prevents the Vector-Space Compression Subversion (Phase 5.2, Attack 2): the optimization layer cannot map malicious intent to a benign action index, because the TEE independently confirms that action index $x_i$ executes what the ontology says it should execute. The check occurs inside the enclave during batch validation, before any property-based evaluation.
 
 ### 6.2 Escalation Path
 
@@ -554,6 +628,8 @@ The Identity Layer is distinguished by:
 7. **The transparency ledger.** What is the precise data structure and protocol for the transparency ledger that records Constitutional-tier changes? Is it a blockchain, a hash chain, or a centralized log with cryptographic audit?
 
 8. **Emergency override.** Is there a mechanism for external entities to force an Identity Layer change in an emergency (e.g., a discovered flaw in core commitments)? Does such a mechanism contradict the self-governing property?
+
+   **Answered in §3.6.** The hardware deadlock breaker (§A.9.5) provides a limited emergency override: if governance deadlocks, the system cold-boots to the genesis baseline $G$. This is not a governance procedure — it is a hardware safety mechanism that restores a known-safe state. It does not contradict the self-governing property because (a) it only activates on governance failure (not on preference), (b) it returns to the **exact genesis state** (not an arbitrary state), and (c) it is enforced by hardware, not software. For cases where the genesis baseline itself contains a flaw, the external multisig (3-of-5 human key holders) can sign an amended genesis manifest $G'$ and reload; this is external by design — the system cannot fix a flawed genesis without human intervention, because the flaw is in the human-provided foundation.
 
 ---
 

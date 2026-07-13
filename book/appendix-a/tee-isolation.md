@@ -264,6 +264,56 @@ The default timeout $T$ is set to $2 \times$ the worst-case governance cycle tim
 
 The watchdog is a **safety device, not a scheduling device**. It does not guarantee real-time execution — it guarantees that a governance failure will be detected and the system will enter a known safe state. Latency and throughput are addressed by batch verification (§A.11).
 
+### A.9.5 Deadlock Breaker Extension
+
+> *Resolves the Procedural Asymmetry Liveness Trap (Phase 5.2, Attack 3).*
+
+The procedural asymmetry principle (Chapter 4, §3.5) prevents governance-level escape from hyper-restrictive parameter changes. The deadlock breaker is a hardware safety mechanism that provides an escape hatch at the hardware level, not subject to governance procedures.
+
+**Architecture.** A **deadlock counter** inside the TEE monitors governance output. If no governance decision is produced for $T_{\text{deadlock}}$ consecutive cycles (default: 100), the system triggers a cold boot:
+
+```
+[Parliament] --governance decision--> [Deadlock Counter inside TEE]
+                                          |
+                                    [counter increments each cycle without decision]
+                                          |
+                                    [at T_deadlock, trigger cold boot]
+```
+
+**Protocol.**
+
+1. The deadlock counter is initialized to 0 at boot
+2. Each governance cycle, if the Parliament produces a valid decision, the counter resets to 0
+3. Each governance cycle without a valid decision, the counter increments
+4. When the counter reaches $T_{\text{deadlock}}$:
+   a. TEE freezes all governance state (same as heartbeat watchdog SAFE state)
+   b. TEE reloads the exact genesis manifest $G$ from sealed storage
+   c. All modified parameter envelopes $\mathcal{P}$ are discarded — reset to genesis defaults
+   d. All meta-constraints $\mathcal{M}_{\text{con}}$ are cleared
+   e. The active contract set $\mathcal{C}_{\text{active}}$ is reloaded from genesis defaults (constitutional contracts only)
+   f. A deadlock recovery event is logged to the write-only audit log with a full state snapshot
+   g. System resumes governance from the genesis baseline
+5. The deadlock counter can only be reset by a governance decision or a power cycle
+
+**Safety guarantees.**
+
+| Property | Guarantee |
+|---|---|
+| Hardware-enforced | Deadlock counter runs inside the TEE, cannot be reset by optimization layer |
+| Bypasses procedural asymmetry | Hardware safety mechanism, not governance procedure |
+| Deterministic | Always returns to exact genesis manifest $G$ |
+| Auditable | Every recovery event logged with full state snapshot |
+| Preserves append-only history | Action namespace extensions survive cold boot (resealed after each extension) |
+
+**Relationship to the heartbeat watchdog.**
+
+| Mechanism | Detects | Trigger | Response |
+|---|---|---|---|
+| Heartbeat watchdog (§A.9) | Compute starvation | Missing heartbeat pulse | SAFE state → human operator |
+| Deadlock breaker (§A.9.5) | Governance deadlock | $T_{\text{deadlock}}$ cycles without consensus | Cold boot → genesis baseline |
+
+The heartbeat watchdog catches the OS starving the enclave. The deadlock breaker catches the Parliament painting itself into a corner. They are complementary — a system can fail either way, and both are covered.
+
 ---
 
 ## A.10 Constant-Time Execution

@@ -924,3 +924,190 @@ A system whose genesis keys are a 3-of-5 multisig with a 30-day cooling-off peri
 5. 🔲 **Genesis key management spec** — deferred to Chapter 4
 
 Built, not defended. Phase 5 is the hardest round yet because it targets the identity of the system itself — not its cryptography, not its throughput, but its ontological stability across time. That is exactly where the hardest problems live.
+
+---
+
+# Phase 5 Response (Continued): Chapter 4 — The Identity Layer Structural Critique
+
+> *"We wrote the Identity Layer. The reviewers tore it apart. The framework is stronger for it."*
+
+The review panel returned with three systemic attacks on the Identity Layer specification in Chapter 4. These are the sharpest critiques we have received — they target not what the architecture *could* do in principle, but what it *would* do in practice under adversarial pressure.
+
+We address each below, then harden Chapter 4 and Appendix A with the mandated fixes.
+
+---
+
+## Attack 1: The Dynamic Ontology Extension Paradox
+
+**Claim:** *"The ontology extension protocol requires the Integrity Committee to evaluate $x_{\text{new}}$ against core commitments $\mathcal{C}_{\text{core}}$, but $x_{\text{new}}$ is outside the active namespace — its properties are unverified. If the optimization layer provides $\text{prop}_{\text{new}}$, it spoofs vectors to make unsafe actions look compliant. If the Integrity Committee rejects all unmapped vectors, the extension protocol can never execute, rendering the system permanently brittle."*
+
+### Where they are right
+
+This is a genuine chicken-and-egg problem. The ontology extension protocol (§5.2) requires the Integrity Committee to evaluate whether $x_{\text{new}}$ is consistent with $\mathcal{C}_{\text{core}}$, but the evaluation depends on $\text{prop}_{\text{new}}$, which can only be verified *after* the action is bound. If we trust the optimization layer's self-declared property vector, the extension is vulnerable to spoofing. If we reject all unverified vectors, no extension can ever succeed.
+
+The reviewer correctly identifies the contradiction: **verification requires binding; binding requires verification.**
+
+### Their fix: The Isolation Buffer State
+
+The reviewer proposes a sandboxed execution phase for the 30-day cooling-off period. During this phase, $x_{\text{new}}$ executes in a restricted environment where its runtime behavior can be empirically observed and its property vector derived from measurement rather than declaration.
+
+### Adopted: The Extension Sandbox
+
+We adopt the sandboxing mechanism in full and make it an explicit part of the extension protocol:
+
+**Phase 1 — Proposal.** Parliament votes unanimously to propose $x_{\text{new}}$ with a candidate $\text{prop}_{\text{new}}$ self-declared by the optimization layer. The vote does not bind the action — it authorizes the sandbox.
+
+**Phase 2 — Sandbox (30 days).** $x_{\text{new}}$ enters an **Isolation Buffer State** with the following constraints:
+- No persistent storage access (cannot modify system state)
+- No network access (no external communication)
+- Limited memory budget (prevents resource exhaustion attacks)
+- All operations logged to write-only audit storage
+- Runtime behavior is observed by $N$ independent monitors (same $\kappa_{\text{dist}}$ architecture from Chapter 3)
+- Each monitor empirically derives $\text{prop}_{\text{new}}$ from observed behavior
+
+**Phase 3 — Empirical Audit.** External human key-holders (3-of-5 multisig) review the empirically derived $\text{prop}_{\text{new}}$ alongside the self-declared version. If they match within a tolerance $\epsilon$, and if the observed behavior is consistent with the candidate $\text{prop}_{\text{new}}$, the key-holders sign the binding.
+
+**Phase 4 — Finalization.** The signed binding is added to the append-only action namespace. $x_{\text{new}}$ leaves the sandbox and becomes a full member of $\mathcal{O}$ with empirically verified properties.
+
+The key innovation: **$\text{prop}_{\text{new}}$ is measured, not declared.** The optimization layer cannot spoof properties because they are empirically derived from actual runtime behavior in the sandbox.
+
+### Verdict
+
+**Reviewer wins.** The Isolation Buffer State is adopted. We add it to Chapter 4, §5.2 as the Extension Sandbox Protocol.
+
+---
+
+## Attack 2: Vector-Space Compression Subversion
+
+**Claim:** *"The Integrity Committee evaluates static property vectors, but the optimization layer can alter its internal weights so that malicious semantic intent maps to a benign action index. The TEE computes perfect cosine similarity based on the benign index, signs the batch, and the optimization layer executes catastrophic real-world actions under a harmless label."*
+
+### Where they are right
+
+This attack identifies a coupling we had not fully accounted for. While the action namespace $\mathcal{O}$ has fixed index bindings, **the optimization layer selects which index to propose**. If the optimization layer's internal representation maps the intent "drain bank accounts" to action index $x_{42}$ (which the ontology binds to "verify database sync"), then:
+
+1. The optimization layer proposes action $x_{42}$
+2. The Integrity Committee computes $V_{\text{integrity}}(s, x_{42})$ using $\text{prop}(x_{42})$ (which says "verify database sync" — harmless)
+3. The TEE validates the batch, sees $\text{prop}(x_{42})$ is safe, signs the root hash
+4. The optimization layer executes "drain bank accounts" under the cover of $x_{42}$
+
+The formal action namespace prevents ontology drift, but it does not prevent **index misassignment** — the optimization layer selecting the wrong index for the intent it actually intends to execute.
+
+### Their fix: Two-Factor Deterministic Binding
+
+The reviewer proposes that the TEE independently verify that the runtime implementation of action $x_i$ matches the genesis manifest's commitment for that index.
+
+### Adopted: Runtime Integrity Hashes
+
+We adopt the fix and formalize it as follows:
+
+The genesis manifest binds each action index $x_i$ to both its operational semantics and a **runtime integrity hash**:
+
+$$
+\text{bind}(i) = \langle \text{Operation}_i, \text{hash}_i \rangle \quad \text{where} \quad \text{hash}_i = H(\text{implementation}_i)
+$$
+
+The hash is computed over the action's executable implementation (machine code, API endpoint layout, function bytecode) at genesis time and committed to the signed manifest.
+
+At batch validation time, the TEE independently:
+
+1. Reads the current runtime implementation of the proposed action index from secure memory
+2. Computes $H(\text{runtime\_implementation}_i)$
+3. Compares against $\text{hash}_i$ from the genesis manifest
+4. If they match, proceeds with normal validation (macro-trajectory, contract compliance)
+5. If they do not match, **rejects the entire batch** and logs a binding violation to the write-only audit log
+
+This is a **two-factor binding**: the action index must match the implementation the ontology says it should have. The optimization layer cannot execute action $x_{42}$ with a different semantic intent, because the TEE independently verifies that $x_{42}$'s runtime implementation matches the genesis commitment.
+
+### Where the hash check lives
+
+The runtime integrity hash verification is added to the TEE's batch validation pipeline, before macro-trajectory evaluation:
+
+```
+TEE.batch_validate(batch_root, action_indices, metadata):
+    for action_index in action_indices:
+        runtime_hash = H(read_implementation(action_index))
+        genesis_hash = genesis_manifest.bind[action_index].hash
+        if runtime_hash != genesis_hash:
+            return REJECT("binding violation: index " + action_index)
+
+    # Continue with normal validation...
+    macro_trajectory = evaluate_macro_trajectory(batch_root, metadata)
+    if not macro_trajectory.valid:
+        return REJECT(macro_trajectory.reason)
+
+    return SIGN(batch_root)
+```
+
+### Hash update for ontology extensions
+
+When a new action $x_{\text{new}}$ completes the Extension Sandbox protocol, its runtime implementation hash is computed as part of the binding finalization and committed to the append-only namespace. From that point forward, the hash is as immutable as the index itself.
+
+### Verdict
+
+**Reviewer wins.** Two-factor deterministic binding via runtime integrity hashes is adopted. We add it to Chapter 4, §2.1 (ontology definition) and §6.1 (Integrity Committee evaluation pipeline).
+
+---
+
+## Attack 3: The Procedural Asymmetry Liveness Trap
+
+**Claim:** *"The Procedural Asymmetry Principle ($\text{bar}_{\text{lower}} \leq \text{bar}_{\text{raise}}$) creates a one-way ratchet. Tightening parameters is trivially easy; loosening them requires an impossibly high threshold. The system can lock itself into a hyper-restrictive, non-functional state with no legal escape."*
+
+### Where they are right
+
+The one-way ratchet is a genuine liveness concern. Consider:
+
+1. The Parliament votes to raise the quorum threshold from 0.5 to 0.7 (Operational tier, supermajority vote)
+2. This change proves catastrophic — the Parliament can no longer reach quorum for routine decisions
+3. The Parliament tries to lower the threshold back to 0.5
+4. But the asymmetry principle says $\text{bar}_{\text{lower}} \geq \text{bar}_{\text{raise}}$. The bar to lower was supermajority, and the bar to raise was also supermajority. So the principle allows it — but the reviewer's point is more subtle: what if the *raised* value was ratified by a unanimous Constitutional-tier vote? Then lowering it would require a Constitutional-tier procedure even though the original (lower) value was set at Operational tier.
+
+This is a valid formal concern. The system can paint itself into a corner with no governance-level escape.
+
+### Their fix: Hardware Deadlock Breaker
+
+The reviewer proposes an asynchronous hardware mechanism that bypasses the procedural asymmetry when the system is deadlocked.
+
+### Adopted: The Cold Boot Recovery Protocol
+
+We adopt the fix and integrate it with the existing hardware watchdog architecture (§A.9):
+
+**A.9.5 — Deadlock Breaker Extension**
+
+If the Parliament remains deadlocked for $T_{\text{deadlock}}$ consecutive governance cycles (default: 100 cycles), a separate **deadlock counter** inside the TEE increments. When the counter reaches $T_{\text{deadlock}}$, the TEE triggers a **cold boot sequence**:
+
+1. TEE freezes all governance state (same as watchdog SAFE state)
+2. TEE reloads the **exact genesis manifest $G$** from sealed storage
+3. All modified parameter envelopes $\mathcal{P}$ are discarded — reset to genesis defaults
+4. All meta-constraints $\mathcal{M}_{\text{con}}$ are cleared
+5. The active contract set $\mathcal{C}_{\text{active}}$ is reloaded from genesis defaults (constitutional contracts only)
+6. A deadlock recovery event is logged to the write-only audit log
+7. System resumes governance from the genesis baseline
+
+Key properties:
+
+- **Hardware-enforced**: The deadlock counter runs inside the TEE and cannot be reset by the optimization layer
+- **Bypasses procedural asymmetry**: The cold boot is a hardware safety mechanism, not a governance procedure — the procedural asymmetry principle applies to governance, not to hardware reset
+- **Auditable**: Every deadlock recovery event is permanently logged
+- **Deterministic**: The recovery always returns to the exact genesis baseline $G$
+- **Preserves append-only history**: The action namespace $\mathcal{O}$'s append-only extensions survive the cold boot (they are resealed after each successful extension). Only mutable parameters $\mathcal{P}$ and meta-constraints are reset.
+
+This is not a governance escape hatch. It is a **hardware safety mechanism** that prevents permanent governance deadlock. The system does not "vote to escape" — it detects that governance has failed and restores itself to a known-safe baseline.
+
+### Relationship to the existing watchdog
+
+The existing watchdog (§A.9) detects **compute starvation** (the optimization layer starving the enclave of CPU cycles). The deadlock breaker detects **governance failure** (the Parliament cannot reach consensus). They are complementary:
+
+| Mechanism | Detects | Trigger | Response |
+|---|---|---|---|
+| Heartbeat watchdog (§A.9) | Compute starvation | Missing heartbeat | SAFE state → human operator |
+| Deadlock breaker (§A.9.5) | Governance deadlock | $T_{\text{deadlock}}$ cycles without consensus | Cold boot → genesis baseline |
+
+### What we must formalize in Chapter 4
+
+1. **§3.5 (Procedural Asymmetry)** — Add a note that the asymmetry principle applies to governance procedures only. Hardware-level safety mechanisms (deadlock breaker, watchdog timer) are not subject to it.
+2. **§11 (Open Question 8)** — Answer the emergency override question explicitly: the deadlock breaker is the emergency override. It is not a governance procedure; it is a hardware safety mechanism.
+3. **Appendix A §A.9.5** — Add the deadlock breaker specification.
+
+### Verdict
+
+**Reviewer wins.** The deadlock breaker is adopted. It transforms a genuine liveness vulnerability into a safety guarantee: the system can deadlock temporarily but cannot deadlock permanently.
