@@ -3,3 +3,4 @@ reviews.txt
 __pycache__/
 *.pyc
 .playwright-mcp/
+.env
