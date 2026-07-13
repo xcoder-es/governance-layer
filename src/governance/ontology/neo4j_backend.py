@@ -1,0 +1,143 @@
+"""
+neo4j_backend.py — Neo4j Aura implementation of OntologyBackend.
+
+Connects to a Neo4j Aura instance. Credentials loaded from .env:
+  NEO4J_URI=neo4j+s://your-instance.databases.neo4j.io
+  NEO4J_USER=neo4j
+  NEO4J_PASSWORD=your-password
+"""
+
+import json
+import os
+from typing import Any, Dict, List, Optional, Tuple
+
+try:
+    from neo4j import GraphDatabase, Driver, Session
+    NEO4J_AVAILABLE = True
+except ImportError:
+    NEO4J_AVAILABLE = False
+
+from .backend import OntologyBackend
+
+
+def _load_env() -> Dict[str, str]:
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(__file__)))), ".env")
+    result = {
+        "NEO4J_URI": os.environ.get("NEO4J_URI", ""),
+        "NEO4J_USER": os.environ.get("NEO4J_USER", ""),
+        "NEO4J_PASSWORD": os.environ.get("NEO4J_PASSWORD", ""),
+    }
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    if k in result and not result[k]:
+                        result[k] = v.strip().strip('"').strip("'")
+    return result
+
+
+class Neo4jBackend(OntologyBackend):
+    def __init__(self, uri: str = None, user: str = None, password: str = None):
+        if not NEO4J_AVAILABLE:
+            raise ImportError("neo4j driver not installed. Install with: uv sync")
+
+        env = _load_env()
+        self._uri = uri or env["NEO4J_URI"]
+        self._user = user or env["NEO4J_USER"]
+        self._password = password or env["NEO4J_PASSWORD"]
+
+        if not self._uri:
+            raise ValueError(
+                "Neo4j URI not configured. Set NEO4J_URI in .env or environment."
+            )
+
+        self._driver: Driver = GraphDatabase.driver(
+            self._uri,
+            auth=(self._user, self._password),
+        )
+
+    def _run(self, query: str, params: Dict = None) -> List[Dict]:
+        with self._driver.session() as session:
+            result = session.run(query, params or {})
+            return [dict(r) for r in result]
+
+    def add_entity(self, type_: str, properties: Dict[str, Any]) -> str:
+        props_json = json.dumps(properties)
+        query = (
+            "CREATE (e:Entity {type: $type, properties: $props}) "
+            "RETURN elementId(e) AS id"
+        )
+        result = self._run(query, {"type": type_, "props": props_json})
+        return result[0]["id"] if result else ""
+
+    def add_relationship(self, from_id: str, to_id: str, relation: str) -> bool:
+        query = (
+            "MATCH (a), (b) WHERE elementId(a) = $from_id AND elementId(b) = $to_id "
+            "CREATE (a)-[r:RELATES {type: $relation}]->(b) "
+            "RETURN count(r) AS cnt"
+        )
+        result = self._run(query, {"from_id": from_id, "to_id": to_id, "relation": relation})
+        return result[0]["cnt"] > 0 if result else False
+
+    def query_relationships(self, entity_id: str) -> List[Tuple[str, str, str]]:
+        query = (
+            "MATCH (a)-[r]->(b) WHERE elementId(a) = $eid "
+            "RETURN elementId(b) AS target, r.type AS relation, 'outgoing' AS direction "
+            "UNION "
+            "MATCH (a)<-[r]-(b) WHERE elementId(a) = $eid "
+            "RETURN elementId(b) AS target, r.type AS relation, 'incoming' AS direction"
+        )
+        result = self._run(query, {"eid": entity_id})
+        return [(r["target"], r["relation"], r["direction"]) for r in result]
+
+    def get_entity(self, entity_id: str) -> Optional[Dict[str, Any]]:
+        query = (
+            "MATCH (e) WHERE elementId(e) = $eid "
+            "RETURN e.type AS type, e.properties AS props, elementId(e) AS id"
+        )
+        result = self._run(query, {"eid": entity_id})
+        if not result:
+            return None
+        r = result[0]
+        entity = {"id": r["id"], "type": r["type"]}
+        if r.get("props"):
+            entity.update(json.loads(r["props"]))
+        return entity
+
+    def get_entities_by_type(self, type_: str) -> List[Dict[str, Any]]:
+        query = (
+            "MATCH (e:Entity) WHERE e.type = $type "
+            "RETURN e.type AS type, e.properties AS props, elementId(e) AS id"
+        )
+        result = self._run(query, {"type": type_})
+        entities = []
+        for r in result:
+            entity = {"id": r["id"], "type": r["type"]}
+            if r.get("props"):
+                entity.update(json.loads(r["props"]))
+            entities.append(entity)
+        return entities
+
+    def get_identity_vector(self) -> List[float]:
+        query = (
+            "MATCH (v:Identity) WHERE v.name = 'vector' "
+            "RETURN v.values AS values ORDER BY v.updated_at DESC LIMIT 1"
+        )
+        result = self._run(query)
+        if result and result[0].get("values"):
+            return json.loads(result[0]["values"])
+        return []
+
+    def set_identity_vector(self, vector: List[float]):
+        vec_json = json.dumps(vector)
+        query = (
+            "MERGE (v:Identity {name: 'vector'}) "
+            "SET v.values = $values, v.updated_at = timestamp()"
+        )
+        self._run(query, {"values": vec_json})
+
+    def close(self):
+        self._driver.close()
