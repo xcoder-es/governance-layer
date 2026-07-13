@@ -9,6 +9,7 @@ Connects to a Neo4j Aura instance. Credentials loaded from .env:
 
 import json
 import os
+import ssl
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
@@ -16,6 +17,12 @@ try:
     NEO4J_AVAILABLE = True
 except ImportError:
     NEO4J_AVAILABLE = False
+
+try:
+    import certifi
+    CERTIFI_AVAILABLE = True
+except ImportError:
+    CERTIFI_AVAILABLE = False
 
 from .backend import OntologyBackend
 
@@ -53,6 +60,9 @@ class Neo4jBackend(OntologyBackend):
             raise ValueError(
                 "Neo4j URI not configured. Set NEO4J_URI in .env or environment."
             )
+
+        if CERTIFI_AVAILABLE:
+            os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 
         self._driver: Driver = GraphDatabase.driver(
             self._uri,
