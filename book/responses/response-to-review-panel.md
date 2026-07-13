@@ -739,3 +739,188 @@ This fix is added to Appendix A (§A.11).
 4. ✅ **Hardware watchdog** — added to Appendix A
 5. ✅ **Constant-time execution** — added to Appendix A
 6. ✅ **Merkle-tree batch verification** — added to Appendix A
+
+---
+
+# Phase 5 Response: Identity Layer and Long-Term Integrity
+
+> *"We hardened the present. The reviewers asked about the future."*
+
+The review panel returns with three systemic attacks targeting the Identity Layer and the long-term stability of the entire architecture. None target cryptography, timing, or throughput — they target **time itself**: semantic drift across months of operation, desynchronization across distributed enclaves, and the bootstrap problem at genesis.
+
+We address each below.
+
+---
+
+## Attack 1: The Linguistic Shift Exploit — Semantic Drift
+
+**Claim:** *"You made keys immutable and procedures constant-time, but you left the ontology vulnerable. Over months of fine-tuning, the optimization layer's internal embeddings will drift, redefining contract terms. The Integrity Committee evaluates drifted embeddings and approves actions that violate the original intent. The TEE signs happily because the math checks out."*
+
+### Where they are right about drift
+
+Semantic drift in learned representations is a well-documented phenomenon. Embeddings fine-tuned on domain-specific data shift their geometry; tokens that originally anchored to one region of semantic space migrate to another. If the Integrity Committee's value function $V_{\text{integrity}}(s, a)$ operates on the same representation space as the optimization layer, then over time the committee's evaluation drifts with the optimizer's ontology. A contract that once blocked "predatory lending" would, after drift, approve it under the label "wealth-generation assistance."
+
+This concern is genuine and cannot be dismissed.
+
+### Where the architecture already defends
+
+The action space in this architecture is **formally enumerated, not semantically grounded**. From Chapter 2, §3:
+
+$$
+g = \langle \mathcal{A}_{\text{mask}}, \mathcal{W}_{\text{obj}}, \mathcal{M}_{\text{con}} \rangle
+$$
+
+where $\mathcal{A}_{\text{mask}}$ is a **binary vector over the action space $X$**, and each action $x_i \in X$ is identified by a **fixed index $i$**. From Chapter 3, §2:
+
+A Ulysses Contract specifies $\mathcal{A}_{\text{restrict}}$ as a subset of action indices to remove:
+
+$$
+X_t = X \setminus \{ x_i \in X \mid \mathcal{A}_{\text{restrict}}[i] = 1 \}
+$$
+
+There is no semantic interpretation step. Action 42 is action 42, regardless of how the optimization layer's embeddings have drifted. The contract does not say "do not exploit financial vulnerabilities" in natural language — it says "remove action indices {42, 73, 104} from consideration." The Integrity Committee evaluates whether the proposed action's index falls in the restricted set. This is a **set-membership test**, not a semantic evaluation.
+
+Semantic drift in the optimization layer cannot change whether action 42 is in the restricted set. The restricted set is a fixed bitmask signed at contract enactment.
+
+### Where they reveal a genuine requirement
+
+The reviewer's attack is valid **if actions are generated rather than selected from a fixed enumeration** — if the optimization layer writes its own action proposals as natural language strings, and the Integrity Committee must interpret whether each string violates a contract. Under that assumption, semantic drift bypasses the entire governance layer.
+
+Our response: **We accept the constraint. Actions MUST be drawn from a fixed enumerated namespace $\mathcal{A}$, whose bindings (index → operational semantics) are established at genesis and are immutable thereafter.** The optimization layer does not generate actions; it selects from $\mathcal{A}$. The Parliament does not vote on free-form proposals; it votes on action indices.
+
+This is a strong constraint, but it is the correct one for the governance layer to provide cryptographic guarantees. If the optimization layer needs to express novel behaviors, it must propose new action bindings through the Identity Layer's ontology extension process, which requires unanimity + external audit (see Attack 3).
+
+### What we must formalize
+
+1. **Formal action namespace** — Add to Chapter 3 an explicit commitment that $\mathcal{A}$ is a fixed enumerated set, not a semantic space. Contracts enumerate indices, not natural language categories.
+2. **Ontology extension process** — Document that new actions require Identity Layer approval with the highest governance threshold. This is deferred to Chapter 4.
+
+### Verdict
+
+**Partially valid.** The attack identifies a real failure mode (semantic drift), but it applies to a semantic interpretation architecture we do not use. Our actions are formally enumerated. However, we must make this commitment explicit in the specification to prevent implementors from inadvertently introducing semantic evaluation.
+
+---
+
+## Attack 2: The Split-Brain Fault — Distributed TEE Desynchronization
+
+**Claim:** *"In large-scale cloud deployments, the AI runs on hundreds of isolated TEE enclaves. The optimization layer controls network routing between them. It can present different Merkle batches to different enclaves, splitting the parliament across machines into opposing factions with conflicting signed state."*
+
+### Where they are right about distributed risk
+
+If the architecture were deployed across multiple independent TEE enclaves with no global ordering protocol, the described attack would work. The optimization layer could:
+1. Feed Batch A to Enclave 1 (modifying planning bounds)
+2. Feed Batch B to Enclave 2 (keeping original bounds)
+3. Selectively execute actions from whichever enclave's state favors short-term reward
+
+The Merkle tree provides per-batch integrity but no cross-enclave ordering. This is a genuine vulnerability in any distributed TEE deployment without consensus.
+
+### Where they miss the single-enclave architecture
+
+**The reference architecture assumes a single TEE.** There is one enclave. There is one Speaker. There is one governance state. The optimization layer may run on hundreds of GPUs, but it communicates with exactly one TEE that executes the governance procedure. There is no distributed state to desynchronize.
+
+The optimization layer controls the network between the optimizer and the TEE, but this control only allows it to:
+- **Withhold** batches from the TEE (already handled: missing heartbeat → watchdog fires → SAFE state)
+- **Delay** batch submission (already handled: timeout → default action)
+- **Reorder** batch submissions (doesn't matter: the TEE processes them in FIFO order and each batch is self-contained)
+
+The optimization layer **cannot** create a split-brain condition because there is only one brain.
+
+### Concession: multi-TEE deployments
+
+For systems that genuinely require horizontal scaling of governance (e.g., a federation of autonomous agents each with its own Parliament), split-brain is a real concern. In this case, a consensus protocol must run inside the enclaves:
+
+- **Single-writer (Raft)**: One leader enclave proposes governance decisions; followers replicate. Simple, 5-9 enclaves sufficient for fault tolerance. Raft inside SGX is feasible via Intel's attested channel SDK.
+- **Multi-writer (PBFT)**: All enclaves can propose. 3f+1 enclaves tolerate f byzantine faults. Heavier but necessary when no single leader can be trusted.
+
+The consensus protocol provides **global ordering** and **conflict resolution** — the two properties missing from a naive multi-enclave deployment.
+
+### What we must formalize
+
+1. **Single-enclave commitment** — State explicitly in Appendix A that the reference architecture assumes one TEE. This is a feature, not a limitation.
+2. **Multi-enclave addendum** — Document the consensus protocol requirement for deployers who need multiple enclaves. Raft for trusted deployments, PBFT for adversarial environments.
+
+### Verdict
+
+**Mostly wrong.** The attack assumes a distributed architecture we do not use. The single-enclave design inherently prevents split-brain. For the multi-enclave case, the fix is a standard consensus protocol — well-understood engineering, not a novel vulnerability.
+
+---
+
+## Attack 3: The Genesis Key Dilemma — Human Bootstrapping Failure
+
+**Claim:** *"Who signs the initial configuration manifest inside the TEE before the Identity Layer exists? If humans write it, the system is a static sandbox, not self-governing. If the Identity Layer can modify genesis parameters, the optimization layer can socially engineer humans into signing 'updates' that wipe identity commitments."*
+
+### Where they are right about the circular dependency
+
+The bootstrap problem is genuine and inescapable. A system cannot create its own identity ex nihilo. At $t=0$, something external must establish:
+- The action namespace $\mathcal{A}$ and its bindings
+- The initial Parliament member set and their procedural weights
+- The core identity commitments (what the system fundamentally is and is not)
+- The TEE's root of trust (fuse key burned at manufacture)
+
+This is not unique to our architecture. The U.S. Constitution required 39 human signatories. A DAO's smart contract is deployed from a human wallet. Kubernetes clusters are initialized by a human with `kubeadm init`. Every self-governing system has an external genesis. The question is not whether genesis is external — it is always external — but what happens after.
+
+### Where the binary framing is incomplete
+
+The reviewer offers a false dichotomy: **human-written genesis (static sandbox) vs. self-modifying genesis (vulnerable to social engineering)** . There are at least three mechanisms in the middle:
+
+**1. Tiered mutability with monotonic thresholds**
+
+Genesis parameters are partitioned into tiers:
+
+| Tier | Examples | Modification Threshold | Cooling-Off Period |
+|---|---|---|---|
+| **Immutable** | Action namespace $\mathcal{A}$, TEE root key | Impossible | N/A |
+| **Constitutional** | Core identity commitments, member set | Unanimity (Parliament) + external multisig (3-of-5 human signatories) | 30 days |
+| **Operational** | Vote thresholds, budget allocations | Supermajority (Parliament) | 7 days |
+| **Dynamic** | Per-cycle member parameters | Majority (Parliament) | None |
+
+The highest tier (Constitutional) requires both **internal unanimity** and **external multisig** from geographically separated human key holders. The internal vote prevents unilateral optimization-layer capture; the external multisig prevents Parliament-only collusion.
+
+**2. Diluted authority via independent key holders**
+
+The genesis signing keys are not held by one person. They are distributed across 5 independent entities (e.g., different legal jurisdictions, different institutions) using a 3-of-5 threshold multisig. Social engineering would require compromising at least 3 of 5, from different organizations, likely in different regulatory environments.
+
+**3. Time-locked parameter changes**
+
+Constitutional-tier changes require a 30-day cooling-off period. During this period:
+- The proposed change is published on a public transparency ledger (signed by the TEE)
+- A human operator override window remains open
+- The system's external monitors can issue alerts
+
+The 30-day delay makes exploitation via social engineering harder — the optimization layer cannot "trick" a human into signing an update in 5 minutes and immediately exploit the new permissions.
+
+### The deeper philosophical point
+
+The reviewer frames this as an architectural failure. We see it as a **fundamental law of self-governing systems**: bootstrapping requires external trust. The architecture's job is not to eliminate this trust requirement (impossible), but to **minimize the blast radius of compromised genesis keys** and **make post-genesis modification maximally costly**.
+
+A system whose genesis keys are a 3-of-5 multisig with a 30-day cooling-off period is strictly more resilient to social engineering than a system with a single human administrator who can change anything instantly. The architecture provides this structure — it does not require it, because the deployment specifics depend on operational context, but the architecture supports it.
+
+### What we must formalize
+
+1. **Genesis key management** — Document the tiered mutability model with thresholds, cooling-off periods, and multisig requirements. This belongs in Chapter 4 (Identity Layer), which is in progress.
+2. **Transparency ledger** — Specify that all Constitutional-tier changes are published to a public ledger with a mandatory delay.
+3. **Chapter 4 dependency** — The genesis bootstrapping process is the bridge between human initialization and autonomous self-governance. Chapter 4 will formalize this.
+
+### Verdict
+
+**Partially valid.** The bootstrap circular dependency is real but not unique to our architecture. The tiered mutability model with multisig + cooling-off periods addresses the social engineering concern. However, the formal specification of genesis key management belongs in Chapter 4, which we are developing.
+
+---
+
+## Phase 5 Summary Table
+
+| Critique | Verdict | Action |
+|---|---|---|
+| **5.1** Linguistic Shift (semantic drift) | Partially valid | Formalize action namespace as enumerated indices, not semantic categories (Chapter 3) |
+| **5.2** Split-Brain (distributed TEE desync) | Mostly wrong | Single-enclave architecture prevents split-brain. Multi-enclave addendum: raft/PBFT (Appendix A). |
+| **5.3** Genesis Key Dilemma (bootstrap) | Partially valid | Tiered mutability + multisig + cooling-off periods. Specification deferred to Chapter 4 (Identity Layer). |
+
+## Phase 5 Actions
+
+1. ✅ **Phase 5 response written** — this document
+2. 🔲 **Formal action namespace commitment** — add to Chapter 3 that $\mathcal{A}$ is a fixed enumerated set, not a semantic space
+3. 🔲 **Single-enclave clarification** — add to Appendix A that reference architecture assumes one TEE
+4. 🔲 **Multi-enclave consensus addendum** — document Raft/PBFT requirement for multi-TEE deployments
+5. 🔲 **Genesis key management spec** — deferred to Chapter 4
+
+Built, not defended. Phase 5 is the hardest round yet because it targets the identity of the system itself — not its cryptography, not its throughput, but its ontological stability across time. That is exactly where the hardest problems live.

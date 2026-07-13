@@ -98,6 +98,23 @@ An action restriction may be:
 - **Conditional**: The action is forbidden unless a specified condition holds (e.g., "only if Safety Committee approves with supermajority").
 - **Temporal**: The restriction applies for a specified duration $[t_{\mathrm{start}}, t_{\mathrm{end}}]$, after which it expires automatically.
 
+### 2.2a Formal Action Namespace
+
+A critical architectural commitment: **the action space $X$ is a fixed enumerated set, not a semantic space.** Each action $x_i$ is identified by a unique integer index $i$ whose binding to operational semantics is established at genesis and is immutable thereafter. The governance layer never interprets the semantic meaning of an action — it tests set membership.
+
+$$
+X = \{ x_1, x_2, \ldots, x_n \} \quad \text{with fixed indices}
+$$
+
+Ulysses Contracts do not say "do not exploit financial vulnerabilities." They say "remove actions $\{42, 73, 104\}$ from $X$." The Integrity Committee evaluates whether a proposed action's index falls in the restricted set — a set-membership test, not a semantic evaluation.
+
+This is necessary because:
+1. **Semantic drift** in the optimization layer's learned embeddings cannot alter the formal binding of action indices. Action 42 is action 42 regardless of how the optimizer's ontology shifts.
+2. **Deterministic enforcement** requires a rule that can be evaluated without recourse to learned representations. Set membership is such a rule.
+3. **Cryptographic commitment** (Section 4) signs root hashes over action sets. These commitments are meaningless if the underlying action set is semantically volatile.
+
+If the optimization layer needs to express a novel behavior without a corresponding action index, it must propose a new binding through the Identity Layer's ontology extension process, which requires the highest governance threshold (unanimity of Parliament plus external multisig — see Identity Layer in Chapter 4). This ensures the formal action space cannot be silently expanded by a drifting optimizer.
+
 ### 2.3 Threshold Design
 
 The enactment threshold $\phi$ and revocation threshold $\psi$ are selected from the Parliament's voting rule set $\mathcal{V}$ (defined in Chapter 2):

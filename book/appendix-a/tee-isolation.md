@@ -410,7 +410,55 @@ The optimization layer selects the batch size based on the decision class (routi
 
 ---
 
-## A.12 Open Engineering Questions
+## A.12 Deployment Model: Single-Enclave Architecture
+
+> *Clarifies the architectural assumption underpinning split-brain immunity (Phase 5, Attack 2).*
+
+### A.12.1 Commitment
+
+**The reference architecture assumes a single TEE enclave.** There is exactly one enclave, one Speaker instance, and one governance state. The optimization layer may run on hundreds of GPUs, but it communicates with exactly one enclave that executes the governance procedure. This is a deliberate architectural choice, not a scaling limitation.
+
+### A.12.2 Why Single-Enclave?
+
+Single-enclave deployment provides:
+
+1. **No distributed state.** There is nothing to desynchronize. The enclave's memory is coherent by construction — there is no other enclave to disagree with.
+
+2. **No consensus overhead.** The enclave does not need Raft, Paxos, or PBFT to establish global ordering. There is one writer, one state, one timeline.
+
+3. **Inherent split-brain immunity.** The optimization layer cannot "feed different batches to different enclaves" because there is only one enclave. The optimization layer controls the network between itself and the enclave, but this only allows:
+   - **Withholding** batches (handled by hardware watchdog §A.9)
+   - **Reordering** batches (irrelevant — each batch is self-contained and processed in FIFO order)
+   - **Delaying** batches (handled by timeout → default action)
+
+4. **Simplified attestation.** One enclave means one attestation, one root of trust measurement, one sealing key. Multi-enclave attestation requires a cross-enclave attestation protocol that adds complexity with no architectural benefit for the governance use case.
+
+### A.12.3 Multi-Enclave Addendum
+
+For deployments that genuinely require horizontal scaling of governance (e.g., a federation of autonomous agents, each with its own Parliament), the single-enclave assumption does not apply. Four properties must be added:
+
+**1. Global ordering via consensus.** Without a single writer, multiple enclaves can produce conflicting governance decisions. A consensus protocol must run inside the enclaves:
+
+| Protocol | Use Case | Overhead | Fault Tolerance |
+|---|---|---|---|
+| **Raft** (single-writer) | Trusted deployment, same operator | Low (1 round trip per decision) | Tolerates $f \leq \lfloor (n-1)/2 \rfloor$ crash failures |
+| **PBFT** (multi-writer) | Adversarial deployment, untrusted operators | High ($O(n^2)$ messages) | Tolerates $f \leq \lfloor (n-1)/3 \rfloor$ byzantine failures |
+
+**2. Cross-enclave attestation.** Each enclave must attest to the others using Intel SGX's local attestation protocol (EPID or DCAP). The consensus protocol's messages must be signed by the sending enclave and verified by the receiving enclave.
+
+**3. Deterministic replay.** All enclaves must execute the same governance procedure on the same batch history. The consensus protocol provides the shared log; each enclave replays the log to reach the same state. This is a standard replicated state machine (RSM) pattern.
+
+**4. Leader commitment.** In Raft-based deployments, only the leader enclave's signatures are authoritative. Followers replicate but do not sign. This prevents the split-brain scenario where two enclaves sign conflicting root hashes.
+
+### A.12.4 Guidance
+
+For the common case (single AI system, single operator, single deployment), use the single-enclave architecture. Split-brain is not a concern.
+
+For the edge case (federation of autonomous agents, multi-jurisdiction deployment), use multi-enclave with Raft (trusted) or PBFT (adversarial). The consensus protocol is standard replicated state machine engineering — it does not require novel security research.
+
+---
+
+## A.13 Open Engineering Questions
 
 1. **Sealing frequency.** How often should active contracts be sealed to persistent storage? Too frequent → wear and latency. Too rare → risk of losing contract state on power loss.
 
@@ -426,7 +474,7 @@ The optimization layer selects the batch size based on the decision class (routi
 
 ---
 
-## A.13 References
+## A.14 References
 
 - [Costan & Devadas 2016] — "Intel SGX Explained." *IACR Cryptology ePrint Archive*. The definitive technical analysis of SGX.
 - [AMD 2020] — "AMD SEV-SNP: Strengthening VM Isolation with Integrity Protection and More." *AMD White Paper*.
