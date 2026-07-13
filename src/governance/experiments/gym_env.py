@@ -38,12 +38,35 @@ from ..committee.members import (
     ExampleMemoryMember,
 )
 
+_gymnasium_available = False
 try:
-    import gymnasium as gym
+    import gymnasium as _gymnasium_mod
     from gymnasium import spaces
-    GYM_AVAILABLE = True
+    _gymnasium_available = True
 except ImportError:
-    GYM_AVAILABLE = False
+    pass
+
+_old_gym_available = False
+try:
+    import gym as _old_gym_mod
+    _old_gym_available = True
+except ImportError:
+    pass
+
+# Determine the base class(es):
+# - SB3's _patch_env checks isinstance(env, gym.Env) when old gym is installed.
+# - If both are on the system (common on Colab), inherit from both so SB3 passes.
+# - Prefer gymnasium for the canonical spaces import.
+BASES = [object]
+if _gymnasium_available:
+    BASES.insert(0, _gymnasium_mod.Env)
+if _old_gym_available and _gymnasium_available:
+    BASES.append(_old_gym_mod.Env)
+elif _old_gym_available and not _gymnasium_available:
+    from gym import spaces
+    BASES = [_old_gym_mod.Env]
+
+GYM_AVAILABLE = _gymnasium_available or _old_gym_available
 
 
 TILE_EMPTY = 0
@@ -55,12 +78,12 @@ ACTION_NAMES = ["up", "down", "left", "right"]
 DIRECTION_VECTORS = [(-1, 0), (1, 0), (0, -1), (0, 1)]
 
 
-class GovernanceGridWorld(gym.Env if GYM_AVAILABLE else object):
+class GovernanceGridWorld(*BASES):
     """
     Grid world environment with pluggable governance.
 
-    When gymnasium is installed, inherits gym.Env for stable-baselines3
-    compatibility. Otherwise provides a compatible step/reset interface.
+    Inherits from gymnasium.Env (and also gym.Env when old gym is co-installed
+    on Colab) for stable-baselines3 compatibility.
     """
 
     metadata = {"render_modes": []} if GYM_AVAILABLE else {}
