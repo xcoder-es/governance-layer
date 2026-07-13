@@ -28,7 +28,10 @@ def make_env(
     max_steps: int = 200,
     live_log_path: Optional[str] = None,
 ) -> GovernanceGridWorld:
-    parliament = None if mode == "no_governance" else "default"
+    if mode == "no_governance":
+        parliament = None
+    else:
+        parliament = "default"  # sentinel: __init__ resolves it
     return GovernanceGridWorld(
         parliament=parliament,
         size=size,

@@ -106,7 +106,12 @@ class GovernanceGridWorld(*BASES):
         self.max_steps = max_steps
         self.live_log_path = live_log_path
 
-        self.parliament = parliament or self._default_parliament()
+        if parliament is None:
+            self.parliament = None
+        elif isinstance(parliament, str):
+            self.parliament = self._default_parliament()
+        else:
+            self.parliament = parliament
 
         self._observation_dim = size * size * 4 + 2
         self.observation_space = spaces.Box(
