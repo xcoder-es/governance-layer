@@ -1,2 +1,5 @@
 artificial-human-intelligence-brainstorm.txt
 reviews.txt
+__pycache__/
+*.pyc
+.playwright-mcp/

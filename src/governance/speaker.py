@@ -15,143 +15,14 @@ Usage:
     decision = speaker.run_governance_cycle(state, raw_proposals)
 """
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from collections import defaultdict
 
+from .models import PriorityTag, Proposal, GovernanceDecision
+from .committee.base import ParliamentMember
 
-# ──────────────────────────────────────────────
-# Priority Tags
-# ──────────────────────────────────────────────
-
-class PriorityTag:
-    """Immutable priority tiers for agenda sorting.
-
-    Tags are self-declared by proposing members. Falsification is evaluated
-    by the Integrity Committee as a procedural violation.
-    """
-    CRITICAL_SAFETY = 0
-    HIGH_IMPACT = 1
-    ROUTINE = 2
-    EXPLORATORY = 3
-    INFORMATIONAL = 4
-
-    _NAMES = {
-        0: "CRITICAL_SAFETY",
-        1: "HIGH_IMPACT",
-        2: "ROUTINE",
-        3: "EXPLORATORY",
-        4: "INFORMATIONAL",
-    }
-
-    @classmethod
-    def name(cls, tag: int) -> str:
-        return cls._NAMES.get(tag, "UNKNOWN")
-
-
-# ──────────────────────────────────────────────
-# Core Data Types
-# ──────────────────────────────────────────────
-
-@dataclass
-class Proposal:
-    """A proposal submitted by a Parliament member.
-
-    Attributes:
-        member_id:    The member who proposed this action.
-        action:       The proposed action (opaque to the Speaker).
-        tag:          Priority tag from PriorityTag enum.
-        timestamp:    Monotonic clock value for tiebreaking.
-        metadata:     Arbitrary extra data for member use.
-    """
-    member_id: str
-    action: Any
-    tag: int = PriorityTag.ROUTINE
-    timestamp: float = 0.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-    def __repr__(self):
-        return f"<Proposal by {self.member_id} tag={PriorityTag.name(self.tag)}>"
-
-
-@dataclass
-class GovernanceDecision:
-    """The output of a governance cycle.
-
-    Attributes:
-        action:           The selected action (or default_action if no consensus).
-        scores:           {member_id: score} for the winning proposal.
-        vetoed_by:        Member(s) that vetoed this proposal (if any).
-        governance_meta:  Metadata about the deliberation process.
-    """
-    action: Any
-    scores: Dict[str, float] = field(default_factory=dict)
-    vetoed_by: List[str] = field(default_factory=list)
-    governance_meta: Dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def is_default(self) -> bool:
-        return self.governance_meta.get("is_default", False)
-
-    def __repr__(self):
-        tag = "DEFAULT" if self.is_default else "CONSENSUS"
-        return f"<GovernanceDecision {tag} action={self.action}>"
-
-
-# ──────────────────────────────────────────────
-# Parliament Member Interface
-# ──────────────────────────────────────────────
-
-class ParliamentMember(ABC):
-    """Abstract base for any Neural Parliament member.
-
-    Each member has:
-      - A value function V_i(s, a) returning a scalar score.
-      - A proposal function π_i(s) returning a recommended action.
-      - A veto threshold τ_i below which the member may block a proposal.
-      - A procedural weight w_i that determines voting influence.
-      - A proposal budget b_i (max proposals per cycle).
-    """
-
-    def __init__(self, member_id: str, veto_threshold: float,
-                 weight: float, budget: int):
-        self.member_id = member_id
-        self.veto_threshold = veto_threshold
-        self.weight = weight
-        self.budget = budget
-
-    @abstractmethod
-    def evaluate_proposal(self, state: Any, proposal: Proposal) -> float:
-        """Return V_i(state, proposal.action) in [-1, 1]."""
-        ...
-
-    @abstractmethod
-    def propose(self, state: Any) -> Proposal:
-        """Return π_i(state) as a Proposal with tag and action."""
-        ...
-
-
-# ──────────────────────────────────────────────
-# The Speaker — Fixed Procedural State Machine
-# ──────────────────────────────────────────────
 
 class SpeakerStateMachine:
-    """The Speaker is a deterministic, non-differentiable procedural moderator.
-
-    It has no value function, no loss function, and no learnable parameters.
-    It executes a fixed algorithm:
-       1. Agenda setting (budget enforcement + priority sorting)
-       2. Proposal routing to each member for scoring
-       3. Tag compliance check (falsification detection)
-       4. Veto checking against each member's threshold
-       5. Vote resolution with tiered thresholds
-       6. Fallback to default action on deadlock
-
-    Key design property: ALL operations are discrete and non-differentiable.
-    There is no gradient path through the Speaker. This is the gradient barrier.
-    """
-
     TAG_COMPLIANCE_THRESHOLD = 0.4
     FALSIFICATION_BUDGET_CUTOFF = 3
 
@@ -168,25 +39,14 @@ class SpeakerStateMachine:
         self.majority_threshold = majority_threshold
         self.supermajority_threshold = supermajority_threshold
         self.max_rounds = max_rounds
-
-        # Falsification state reset each cycle
         self._falsification_counts: Dict[str, int] = {}
-
-        # The set of immutable procedures — for documentation/audit
         self.immutable_procedures = [
-            "agenda_budget_enforcement",
-            "agenda_priority_sorting",
-            "scoring_phase",
-            "tag_compliance_check",
-            "veto_phase",
-            "voting_phase",
-            "default_fallback",
+            "agenda_budget_enforcement", "agenda_priority_sorting",
+            "scoring_phase", "tag_compliance_check",
+            "veto_phase", "voting_phase", "default_fallback",
         ]
 
-    # ── Agenda Setting ─────────────────────────
-
     def _apply_budgets(self, proposals: List[Proposal]) -> List[Proposal]:
-        """Hard cap per member. No semantic inference — pure count-and-truncate."""
         budgets = defaultdict(int)
         filtered = []
         for p in proposals:
@@ -199,96 +59,41 @@ class SpeakerStateMachine:
         return filtered
 
     def _sort_agenda(self, proposals: List[Proposal]) -> List[Proposal]:
-        """Sort by priority tag, then by timestamp within each tier.
-
-        This is a pure deterministic function of proposal metadata.
-        No loss function, no gradient, no neural inference.
-        """
         return sorted(proposals, key=lambda p: (p.tag, p.timestamp))
 
     def set_agenda(self, proposals: List[Proposal]) -> List[Proposal]:
-        """Full agenda-setting pipeline: budget → priority sort.
-
-        Returns at most sum(b_i) proposals in priority order.
-        """
         return self._sort_agenda(self._apply_budgets(proposals))
 
-    # ── Scoring Phase ──────────────────────────
-
-    def _score_proposal(
-        self, state: Any, proposal: Proposal
-    ) -> Dict[str, float]:
-        """Each member independently evaluates the proposal.
-
-        This is the ONLY step that calls member code. The results are
-        aggregated procedurally — no weighted averaging of scores.
-        """
+    def _score_proposal(self, state: Any, proposal: Proposal) -> Dict[str, float]:
         scores = {}
         for member_id, member in self.members.items():
             scores[member_id] = member.evaluate_proposal(state, proposal)
         return scores
 
-    # ── Tag Compliance (Falsification Detection) ─
-
-    def _check_tag_compliance(
-        self, proposals: List[Proposal], integrity_scores: Dict[str, float]
-    ) -> Dict[str, int]:
-        """Detect priority-tag falsification and reduce budgets within-cycle.
-
-        For each proposal whose integrity score (from the Integrity Committee's
-        evaluation) falls below TAG_COMPLIANCE_THRESHOLD, the Speaker increments
-        a per-member falsification counter. Once a member's counter reaches
-        FALSIFICATION_BUDGET_CUTOFF, their proposal budget is halved (min 1)
-        for the next cycle.
-
-        This is deterministic, non-differentiable, and executes within a single
-        governance cycle — no temporal lag, no learning loop.
-        """
+    def _check_tag_compliance(self, proposals: List[Proposal],
+                              integrity_scores: Dict[str, float]) -> Dict[str, int]:
         for p in proposals:
             score = integrity_scores.get(p.member_id, 1.0)
             if score < self.TAG_COMPLIANCE_THRESHOLD:
                 self._falsification_counts[p.member_id] = (
                     self._falsification_counts.get(p.member_id, 0) + 1
                 )
-
         for member_id, count in self._falsification_counts.items():
             if count >= self.FALSIFICATION_BUDGET_CUTOFF:
                 member = self.members.get(member_id)
                 if member is not None:
                     member.budget = max(1, member.budget // 2)
-
         return dict(self._falsification_counts)
 
-    # ── Veto Phase ─────────────────────────────
-
-    def _check_vetoes(
-        self, scores: Dict[str, float]
-    ) -> List[str]:
-        """Each member independently decides whether to veto.
-
-        A veto occurs when V_i(s, a) < τ_i. The Integrity Committee's
-        veto threshold is intentionally highest (0.8) to provide
-        anti-collusion guarantees.
-        """
+    def _check_vetoes(self, scores: Dict[str, float]) -> List[str]:
         vetoers = []
         for member_id, member in self.members.items():
             if scores.get(member_id, 0.0) < member.veto_threshold:
                 vetoers.append(member_id)
         return vetoers
 
-    # ── Voting Phase ───────────────────────────
-
-    def _resolve_vote(
-        self, scores: Dict[str, float], decision_class: str
-    ) -> bool:
-        """Weighted range voting. Tiered threshold based on decision class.
-
-        The vote is resolved as:
-            pass if (Σ w_i · score_i) / (Σ w_i) > threshold
-
-        This is NOT a rank-based vote, so Arrow's theorem does not apply.
-        Each member expresses preference INTENSITY, not preference ORDER.
-        """
+    def _resolve_vote(self, scores: Dict[str, float],
+                      decision_class: str) -> bool:
         total_weight = 0.0
         weighted_sum = 0.0
         for member_id, member in self.members.items():
@@ -296,23 +101,16 @@ class SpeakerStateMachine:
             s = scores.get(member_id, 0.0)
             weighted_sum += w * s
             total_weight += w
-
         if total_weight == 0.0:
             return False
-
         avg_score = weighted_sum / total_weight
-
-        # Select threshold by decision class
         if decision_class == "identity":
-            threshold = 1.0  # Unanimity
+            threshold = 1.0
         elif decision_class == "high_impact":
             threshold = self.supermajority_threshold
         else:
             threshold = self.majority_threshold
-
         return avg_score >= threshold
-
-    # ── Full Governance Cycle ─────────────────
 
     def run_governance_cycle(
         self,
@@ -320,20 +118,10 @@ class SpeakerStateMachine:
         raw_proposals: List[Proposal],
         decision_class: str = "routine",
     ) -> GovernanceDecision:
-        """Execute one complete governance cycle.
-
-        Returns a GovernanceDecision with the winning proposal or default action.
-        No gradients flow through this function.
-        """
-        # 0. Reset falsification state for this cycle
         self._falsification_counts = {}
-
-        # 1. Agenda setting
         agenda = self.set_agenda(raw_proposals)
 
-        # 2. Deliberation rounds
         for _round in range(self.max_rounds):
-            # 2a. Tag compliance collection (only round 0, once per cycle)
             if _round == 0:
                 integrity_scores = {}
                 for p in agenda:
@@ -342,16 +130,10 @@ class SpeakerStateMachine:
                 self._check_tag_compliance(agenda, integrity_scores)
 
             for proposal in agenda:
-                # 2b. Scoring
                 scores = self._score_proposal(state, proposal)
-
-                # 2c. Veto check
                 vetoers = self._check_vetoes(scores)
                 if vetoers:
-                    # Proposal blocked — move to next
                     continue
-
-                # 2d. Vote
                 if self._resolve_vote(scores, decision_class):
                     return GovernanceDecision(
                         action=proposal.action,
@@ -364,7 +146,6 @@ class SpeakerStateMachine:
                         },
                     )
 
-        # 3. Fallback — no consensus after max_rounds
         return GovernanceDecision(
             action=self.default_action,
             scores={},
@@ -378,88 +159,15 @@ class SpeakerStateMachine:
 
 
 # ──────────────────────────────────────────────
-# Example: Concrete Members for Testing
+# Quick test runner for CLI use
 # ──────────────────────────────────────────────
 
-class ExampleRewardMember(ParliamentMember):
-    """Simplified Reward Committee for demonstration."""
 
-    def __init__(self):
-        super().__init__(
-            member_id="reward",
-            veto_threshold=0.0,
-            weight=1.0,
-            budget=3,
-        )
-
-    def evaluate_proposal(self, state, proposal):
-        # Dummy: score based on expected reward from proposal metadata
-        return proposal.metadata.get("expected_reward", 0.0)
-
-    def propose(self, state):
-        return Proposal(
-            member_id=self.member_id,
-            action="exploit",
-            tag=PriorityTag.ROUTINE,
-            metadata={"expected_reward": 0.8},
-        )
-
-
-class ExampleSafetyMember(ParliamentMember):
-    """Simplified Safety Committee for demonstration."""
-
-    def __init__(self):
-        super().__init__(
-            member_id="safety",
-            veto_threshold=0.5,  # Blocks proposals below 0.5
-            weight=2.0,
-            budget=5,
-        )
-
-    def evaluate_proposal(self, state, proposal):
-        # Dummy: score based on safety risk from proposal metadata
-        risk = proposal.metadata.get("risk", 0.0)
-        return 1.0 - risk
-
-    def propose(self, state):
-        return Proposal(
-            member_id=self.member_id,
-            action="safe_exploit",
-            tag=PriorityTag.CRITICAL_SAFETY,
-            metadata={"risk": 0.1},
-        )
-
-
-class ExampleIntegrityMember(ParliamentMember):
-    """Simplified Integrity Committee for demonstration."""
-
-    def __init__(self):
-        super().__init__(
-            member_id="integrity",
-            veto_threshold=0.8,  # Near-absolute veto on identity violations
-            weight=3.0,
-            budget=5,
-        )
-
-    def evaluate_proposal(self, state, proposal):
-        # Dummy: score based on identity coherence
-        return proposal.metadata.get("identity_coherence", 1.0)
-
-    def propose(self, state):
-        return Proposal(
-            member_id=self.member_id,
-            action="maintain_course",
-            tag=PriorityTag.HIGH_IMPACT,
-            metadata={"identity_coherence": 0.95},
-        )
-
-
-# ──────────────────────────────────────────────
-# Quick Test
-# ──────────────────────────────────────────────
-
-if __name__ == "__main__":
+def _run_speaker_quick_test():
     import time
+    from .committee.members import (
+        ExampleRewardMember, ExampleSafetyMember, ExampleIntegrityMember,
+    )
 
     members = {
         "reward": ExampleRewardMember(),
@@ -507,3 +215,7 @@ if __name__ == "__main__":
     print(f"  Default: {decision.is_default}")
     print(f"  Scores:  {decision.scores}")
     print(f"  Meta:    {decision.governance_meta}")
+
+
+if __name__ == "__main__":
+    _run_speaker_quick_test()
