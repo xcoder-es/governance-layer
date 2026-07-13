@@ -12,8 +12,13 @@ Usage:
 
 import json
 import os
+import sys
 import time
 from typing import Any, Dict, List, Optional
+
+_src = os.path.join(os.path.dirname(__file__), "..", "..")
+if _src not in sys.path:
+    sys.path.insert(0, os.path.abspath(_src))
 
 import streamlit as st
 import altair as alt
@@ -73,9 +78,23 @@ def _render_grid(step_data: Dict, size: int = 10):
 
 def _render_scores(step_data: Dict):
     scores = step_data.get("scores", {})
-    if not scores:
-        st.caption("No scores available")
+    vetoed_by = step_data.get("vetoed_by", [])
+    is_default = step_data.get("is_default", False)
+    falsification_counts = step_data.get("falsification_counts", {})
+    veto_count = step_data.get("veto_count", 0)
+
+    if is_default:
+        st.info("**Parliament blocked this action** — no proposal reached consensus")
+        if falsification_counts:
+            st.caption(f"Falsifications detected: {falsification_counts}")
+        if veto_count:
+            st.caption(f"Total vetoes this episode: {veto_count}")
         return
+
+    if not scores:
+        st.caption("No scores recorded")
+        return
+
     score_df = pd.DataFrame({
         "member": list(scores.keys()),
         "score": list(scores.values()),
@@ -90,10 +109,6 @@ def _render_scores(step_data: Dict):
         ),
     ).properties(height=200, title="Parliament Member Scores")
     st.altair_chart(chart, use_container_width=True)
-
-    vetoed = step_data.get("vetoed_by", [])
-    if vetoed:
-        st.warning(f"⚠️ Vetoed by: {', '.join(vetoed)}")
 
 
 def render_parliament_tab():
@@ -114,7 +129,7 @@ def render_parliament_tab():
 
         st.subheader("Or: Run a quick local demo")
 
-        from ..experiments.gym_env import GovernanceGridWorld
+        from governance.experiments.gym_env import GovernanceGridWorld
         env = GovernanceGridWorld(size=6, seed=42)
         obs, _ = env.reset()
 
@@ -170,7 +185,9 @@ def render_parliament_tab():
 
     col_grid, col_vote = st.columns([1, 2])
     with col_grid:
-        _render_grid(step_data, size=int(np.sqrt(len(step_data.get("grid", [])) + 1)) if step_data.get("grid") else 6)
+        grid_data = step_data.get("grid", [])
+        gs = len(grid_data) if grid_data else 6
+        _render_grid(step_data, size=gs)
     with col_vote:
         _render_scores(step_data)
 
