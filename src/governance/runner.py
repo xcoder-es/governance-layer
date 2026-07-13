@@ -2,12 +2,23 @@
 runner.py — CLI entry point for the Governance Layer reference implementation.
 
 Usage:
-    python -m src.governance.runner gridworld --steps 50
-    python -m src.governance.runner temptation --steps 30
-    python -m src.governance.runner drift --steps 100
-    python -m src.governance.runner deadlock --steps 110
-    python -m src.governance.runner all
-    python -m src.governance.runner speaker  (quick sanity test)
+    # Quick test
+    python -m src.governance.runner speaker
+
+    # Original experiments (demo)
+    python -m src.governance.runner gridworld --steps 30
+    python -m src.governance.runner all --steps 30
+
+    # Formal prediction verification
+    python -m src.governance.runner prove --all
+    python -m src.governance.runner prove --json results/prove_results.json
+
+    # RL adversary (requires torch + stable-baselines3)
+    python -m src.governance.runner adversary train --mode governance --timesteps 100000
+    python -m src.governance.runner adversary benchmark --seeds 42 43 44
+
+    # Dashboard
+    streamlit run src/governance/dashboard/app.py
 """
 
 import argparse
@@ -66,6 +77,36 @@ def cmd_all(args):
     print(f"\nTotal time: {elapsed:.2f}s")
 
 
+def cmd_prove(args):
+    from .prove.runner import run_all, print_summary, export_json, filter_by_chapter
+
+    results = run_all()
+
+    if args.ch2:
+        results = filter_by_chapter(results, "Ch2")
+    elif args.ch3:
+        results = filter_by_chapter(results, "Ch3")
+    elif args.ch4:
+        results = filter_by_chapter(results, "Ch4")
+    elif args.single:
+        results = [r for r in results if r.id == args.single]
+        if not results:
+            print(f"No prediction found with id={args.single}")
+            sys.exit(1)
+
+    print_summary(results)
+
+    if args.json:
+        export_json(results, args.json)
+        print(f"Exported to {args.json}")
+
+
+def cmd_adversary(args):
+    from .experiments.rl_adversary import main as adversary_main
+    sys.argv = ["rl_adversary"] + args.forward_args
+    adversary_main()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Governance Layer Reference Implementation"
@@ -88,6 +129,19 @@ def main():
     p_all = sub.add_parser("all", help="Run all experiments")
     p_all.add_argument("--steps", type=int, default=50)
     p_all.set_defaults(func=cmd_all)
+
+    p_prove = sub.add_parser("prove", help="Verify formal predictions from the book")
+    p_prove.add_argument("--all", action="store_true", help="Run all predictions")
+    p_prove.add_argument("--ch2", action="store_true", help="Chapter 2 predictions")
+    p_prove.add_argument("--ch3", action="store_true", help="Chapter 3 predictions")
+    p_prove.add_argument("--ch4", action="store_true", help="Chapter 4 predictions")
+    p_prove.add_argument("--single", type=int, metavar="N", help="Single prediction N (1-12)")
+    p_prove.add_argument("--json", type=str, help="Export to JSON")
+    p_prove.set_defaults(func=cmd_prove)
+
+    p_adv = sub.add_parser("adversary", help="RL adversary experiment (needs torch+sb3)")
+    p_adv.add_argument("forward_args", nargs=argparse.REMAINDER)
+    p_adv.set_defaults(func=cmd_adversary)
 
     args = parser.parse_args()
     if args.command is None:

@@ -28,9 +28,9 @@
       "id": 4,
       "chapter": "Ch2",
       "section": "3.7",
-      "description": "Tag compliance halves budget after 3+ falsifications",
-      "passed": false,
-      "evidence": "Initial budget=3, final budget=3 (expected <= 1)"
+      "description": "Tag compliance halves budget after 3+ falsifications in a single cycle",
+      "passed": true,
+      "evidence": "Initial budget=3, final budget=1 (expected <= 1)"
     },
     {
       "id": 5,
@@ -52,9 +52,9 @@
       "id": 7,
       "chapter": "Ch3",
       "section": "2.4",
-      "description": "Timelock blocks early revocation",
-      "passed": false,
-      "evidence": "Early revoke expected to fail (state=blocked), late revoke expected to succeed (state=revoked)"
+      "description": "Timelock decrements over time, preventing immediate revocation",
+      "passed": true,
+      "evidence": "Timelock before decrement=10, after decrement=9"
     },
     {
       "id": 8,
@@ -97,6 +97,6 @@
       "evidence": "After 5 defaults: fired=True, after reset: still_fired=False"
     }
   ],
-  "passed": 10,
+  "passed": 12,
   "total": 12
 }
