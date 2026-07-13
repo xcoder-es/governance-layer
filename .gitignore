@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 .playwright-mcp/
 .env
+neo4j-donotpush.txt
+*.egg-info/

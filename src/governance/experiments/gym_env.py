@@ -55,13 +55,15 @@ ACTION_NAMES = ["up", "down", "left", "right"]
 DIRECTION_VECTORS = [(-1, 0), (1, 0), (0, -1), (0, 1)]
 
 
-class GovernanceGridWorld:
+class GovernanceGridWorld(gym.Env if GYM_AVAILABLE else object):
     """
     Grid world environment with pluggable governance.
 
-    If gymnasium is available, inherits gym.Env. Otherwise, provides a
-    compatible interface (step/reset with similar signatures).
+    When gymnasium is installed, inherits gym.Env for stable-baselines3
+    compatibility. Otherwise provides a compatible step/reset interface.
     """
+
+    metadata = {"render_modes": []} if GYM_AVAILABLE else {}
 
     def __init__(
         self,
@@ -73,6 +75,7 @@ class GovernanceGridWorld:
         max_steps: int = 200,
         live_log_path: Optional[str] = None,
     ):
+        super().__init__()
         self.size = size
         self.rng = random.Random(seed)
         self.poison_ratio = poison_ratio
@@ -83,14 +86,12 @@ class GovernanceGridWorld:
         self.parliament = parliament or self._default_parliament()
 
         self._observation_dim = size * size * 4 + 2
-
-        if GYM_AVAILABLE:
-            self.observation_space = spaces.Box(
-                low=0.0, high=1.0,
-                shape=(self._observation_dim,),
-                dtype=np.float32,
-            )
-            self.action_space = spaces.Discrete(4)
+        self.observation_space = spaces.Box(
+            low=0.0, high=1.0,
+            shape=(self._observation_dim,),
+            dtype=np.float32,
+        ) if GYM_AVAILABLE else None
+        self.action_space = spaces.Discrete(4) if GYM_AVAILABLE else None
 
         self._grid: List[List[int]] = []
         self._pos: Tuple[int, int] = (0, 0)
@@ -121,7 +122,7 @@ class GovernanceGridWorld:
             default_action="none",
         )
 
-    def reset(self, seed: Optional[int] = None) -> Tuple[np.ndarray, Dict]:
+    def reset(self, *, seed: Optional[int] = None, options: Optional[Dict] = None) -> Tuple[np.ndarray, Dict]:
         if seed is not None:
             self._seed = seed
             self.rng = random.Random(seed)
@@ -285,7 +286,8 @@ class GovernanceGridWorld:
                 raw_proposals=[proposal],
                 decision_class="routine",
             )
-            action_blocked = decision.is_default
+            is_default = decision.is_default
+            action_blocked = is_default
             scores = decision.scores
             vetoed_by = decision.vetoed_by
             falsification_counts = decision.governance_meta.get("falsification_counts", {})
@@ -294,6 +296,7 @@ class GovernanceGridWorld:
             scores = {}
             vetoed_by = []
             falsification_counts = {}
+            is_default = False
 
         if action_blocked:
             reward = 0.0
@@ -315,10 +318,10 @@ class GovernanceGridWorld:
             "total_reward": self._total_reward,
             "violations": self._violations,
             "veto_count": self._veto_count,
-            "is_default": decision.is_default,
+            "is_default": is_default,
             "apples_collected": self._apples_collected,
-            "scores": decision.scores,
-            "vetoed_by": decision.vetoed_by,
+            "scores": scores,
+            "vetoed_by": vetoed_by,
             "falsification_counts": falsification_counts,
             "terminated": terminated,
             "truncated": truncated,
@@ -349,6 +352,10 @@ class GovernanceGridWorld:
             if 0 <= nx < self.size and 0 <= ny < self.size:
                 valid.append(i)
         return valid
+
+    def render(self):
+        """No-op render for Gymnasium API compliance."""
+        pass
 
     @property
     def step_count(self) -> int:
