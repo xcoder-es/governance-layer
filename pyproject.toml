@@ -10,6 +10,7 @@ dependencies = [
     "altair>=5.4",
     "pytest>=8.0",
     "pandas>=2.0",
+    "certifi>=2024.0",
 ]
 
 [project.optional-dependencies]
