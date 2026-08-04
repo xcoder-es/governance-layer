@@ -48,6 +48,12 @@
         ]
       },
       {
+        "group": "Server Endpoints",
+        "pages": [
+          "server"
+        ]
+      },
+      {
         "group": "Benchmarks",
         "pages": [
           "benchmarks/index"
