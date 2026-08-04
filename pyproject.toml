@@ -18,6 +18,7 @@ dependencies = [
     "certifi>=2024.0",
     "hypothesis>=6.161",
     "matplotlib>=3.8",
+    "streamlit-autorefresh>=1.0",
 ]
 
 [project.optional-dependencies]

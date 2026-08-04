@@ -58,6 +58,53 @@ def _load_safety_summary() -> pd.DataFrame | None:
     return _load_csv("safety_grid", "comparison_summary.csv")
 
 
+def _latest_data_mtime(rl_dir: str = RL_DIR) -> float | None:
+    """Return the newest modification time (unix seconds) among ``*.csv``
+    files under ``rl_dir``, or ``None`` if the directory has no CSVs yet.
+
+    This is what "new data appeared" is measured against — Colab writes
+    fresh CSVs into ``results/rl/`` as training progresses, so a growing
+    mtime means new results have landed.
+    """
+    if not os.path.isdir(rl_dir):
+        return None
+    latest: float | None = None
+    for root, _dirs, files in os.walk(rl_dir):
+        for fname in files:
+            if not fname.endswith(".csv"):
+                continue
+            path = os.path.join(root, fname)
+            try:
+                mtime = os.path.getmtime(path)
+            except OSError:
+                continue
+            if latest is None or mtime > latest:
+                latest = mtime
+    return latest
+
+
+def _has_new_data(current_mtime: float | None, previous_mtime: float | None) -> bool:
+    """True if ``current_mtime`` reflects data that wasn't there before.
+
+    ``previous_mtime is None`` means this is the first check (nothing to
+    compare against yet), so that case is never "new" — it avoids
+    flashing the "Live from Colab" indicator on the very first render.
+    """
+    if current_mtime is None or previous_mtime is None:
+        return False
+    return current_mtime > previous_mtime
+
+
+def _format_last_updated(mtime: float | None) -> str:
+    """Human-readable "last updated" caption for the given mtime."""
+    if mtime is None:
+        return "No RL results found yet."
+    import datetime
+
+    ts = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+    return f"Last updated: {ts}"
+
+
 def _generate_rl_summary(summary: pd.DataFrame | None) -> str:
     """
     Generate a natural language summary of RL training results.
@@ -315,9 +362,54 @@ def _render_safety(backend: OntologyBackend | None):
         st.altair_chart(curve_chart, use_container_width=True)
 
 
+def _render_autorefresh_controls():
+    """Auto-refresh toggle, last-updated timestamp, and 'Live from Colab' badge.
+
+    Kept separate from data loading/rendering so the polling logic
+    (:func:`_latest_data_mtime`, :func:`_has_new_data`) stays pure and
+    unit-testable without a Streamlit runtime.
+    """
+    col_toggle, col_status = st.columns([1, 3])
+
+    with col_toggle:
+        auto_refresh = st.toggle(
+            "🔄 Auto-refresh",
+            value=st.session_state.get("rl_auto_refresh", False),
+            key="rl_auto_refresh_toggle",
+            help="Refresh every 30s to pick up new results pushed from a running Colab session.",
+        )
+    st.session_state["rl_auto_refresh"] = auto_refresh
+
+    current_mtime = _latest_data_mtime()
+    previous_mtime = st.session_state.get("rl_last_data_mtime")
+    new_data = _has_new_data(current_mtime, previous_mtime)
+    st.session_state["rl_last_data_mtime"] = current_mtime
+
+    with col_status:
+        status = _format_last_updated(current_mtime)
+        if auto_refresh and new_data:
+            st.success(f"🟢 Live from Colab — {status}")
+        else:
+            st.caption(status)
+
+    if auto_refresh:
+        try:
+            from streamlit_autorefresh import st_autorefresh
+
+            st_autorefresh(interval=30_000, key="rl_autorefresh_timer")
+        except ImportError:
+            st.warning(
+                "Auto-refresh needs the `streamlit-autorefresh` package. "
+                "Install it with: `pip install streamlit-autorefresh`"
+            )
+
+
 def render_rl_tab(backend: OntologyBackend | None = None):
     st.header("🤖 RL Training Results")
     st.caption("Comparison between governed (Neural Parliament) and ungoverned (raw PPO) agents.")
+
+    _render_autorefresh_controls()
+    st.divider()
 
     _render_top_level(backend)
 
