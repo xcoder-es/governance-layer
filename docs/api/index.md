@@ -18,6 +18,7 @@ description: "Reference for the Python governance package: Speaker, Parliament m
 ::: governance.tee.enclave
 ::: governance.tee.batch
 ::: governance.tee.watchdog
+::: governance.server
 ::: governance.tee.constant_time
 ::: governance.experiments.base
 ::: governance.benchmarks.baselines

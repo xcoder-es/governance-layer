@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Hypothesis property-based tests for contracts (mask merger, enforcement, timelock), Identity Layer (tier rules, multisig thresholds, ontology hashes), and TEE (watchdog, Merkle trees, constant-time ops) (#104)
 - Benchmark smoke test job in CI (`benchmark-smoke` in `.github/workflows/tests.yml`) (#105)
 - Formal prediction cross-validation harness (#144): 12-prediction confirmation table, adversarial edge-case catalog, sensitivity analysis, and `prove-agent` CLI subcommand
-
+- `/healthz`, `/readyz`, `/metrics` endpoints for `runner serve`: liveness, readiness (Speaker, TEE watchdog, deadlock breaker, backend), and Prometheus metrics via the optional `observability` extra (#163)
 ### Changed
 - Aligned all four benchmark figures with analysis pipeline: reward curves use bootstrap CIs instead of parametric error; violation rate and deadlock frequency bar charts use bootstrap CI error bars instead of stdev; Pareto frontier overlay added; color palette unified across all figure types (#101)
 
