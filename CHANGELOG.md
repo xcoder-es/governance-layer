@@ -15,7 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Hypothesis property-based tests for contracts (mask merger, enforcement, timelock), Identity Layer (tier rules, multisig thresholds, ontology hashes), and TEE (watchdog, Merkle trees, constant-time ops) (#104)
 - Benchmark smoke test job in CI (`benchmark-smoke` in `.github/workflows/tests.yml`) (#105)
 - Formal prediction cross-validation harness (#144): 12-prediction confirmation table, adversarial edge-case catalog, sensitivity analysis, and `prove-agent` CLI subcommand
+- Auto-refresh toggle for the RL Training tab: polls `results/rl/` every 30s, shows a last-updated timestamp and a "Live from Colab" indicator when new results land (#75)
 
+### Changed
 ### Changed
 - Aligned all four benchmark figures with analysis pipeline: reward curves use bootstrap CIs instead of parametric error; violation rate and deadlock frequency bar charts use bootstrap CI error bars instead of stdev; Pareto frontier overlay added; color palette unified across all figure types (#101)
 
